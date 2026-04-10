@@ -22,6 +22,7 @@ class Orchestrator:
             "summary": "",
             "sections": "",
             "key_facts": "",
+            "ecg_analysis": "",
             "output_path": "",
             "error": None,
         }

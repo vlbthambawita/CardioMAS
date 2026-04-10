@@ -17,6 +17,9 @@ class AgentState(TypedDict):
     sections: str
     key_facts: str
 
+    # Populated by ECGExpertNode
+    ecg_analysis: str
+
     # Populated by WriteNode
     output_path: str
 

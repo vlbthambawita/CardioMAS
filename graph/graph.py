@@ -4,17 +4,17 @@ LangGraph graph definition.
 Flow:
     START → scrape → [error?] → END
                    ↓ (ok)
-                 extract → write → END
+                 extract → ecg_expert → write → END
 """
 
 from langgraph.graph import StateGraph, START, END
 
 from .state import AgentState
-from .nodes import scrape_node, extract_node, write_node
+from .nodes import scrape_node, extract_node, ecg_expert_node, write_node
 
 
 def _route_after_scrape(state: AgentState) -> str:
-    """If scraping failed, skip extraction and bail out early."""
+    """If scraping failed, skip all downstream nodes and bail out early."""
     if state.get("error"):
         return "end"
     return "extract"
@@ -26,6 +26,7 @@ def build_graph():
     # Register nodes
     workflow.add_node("scrape", scrape_node)
     workflow.add_node("extract", extract_node)
+    workflow.add_node("ecg_expert", ecg_expert_node)
     workflow.add_node("write", write_node)
 
     # Entry point
@@ -38,8 +39,9 @@ def build_graph():
         {"extract": "extract", "end": END},
     )
 
-    # Fixed edges for the happy path
-    workflow.add_edge("extract", "write")
+    # Happy path: extract → ecg_expert → write
+    workflow.add_edge("extract", "ecg_expert")
+    workflow.add_edge("ecg_expert", "write")
     workflow.add_edge("write", END)
 
     return workflow.compile()
