@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 Multi-Agent Web Extractor CLI
+<<<<<<< HEAD
 Uses Ollama + Gemma 4 to scrape a website and extract structured data to .md files.
+=======
+Uses LangGraph + Ollama + Gemma 4 to scrape websites and extract structured data to .md files.
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
 """
 
 import sys
@@ -12,10 +16,17 @@ from orchestrator import Orchestrator
 BANNER = r"""
 ╔══════════════════════════════════════════════════════════╗
 ║          Multi-Agent Web Extractor                       ║
+<<<<<<< HEAD
 ║          Powered by Ollama + Gemma 4                     ║
 ║                                                          ║
 ║  Agents:  ScrapeAgent → ExtractAgent → WriterAgent       ║
 ║  Output:  ./output/*.md                                  ║
+=======
+║          LangGraph  +  Ollama  +  Gemma 4                ║
+║                                                          ║
+║  Graph:  scrape → extract → write → END                  ║
+║  Output: ./output/*.md                                   ║
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
 ╚══════════════════════════════════════════════════════════╝
 """
 
@@ -34,6 +45,12 @@ def is_valid_url(text: str) -> bool:
 
 
 def list_outputs(output_dir: str):
+<<<<<<< HEAD
+=======
+    if not os.path.isdir(output_dir):
+        print("  No output directory found.\n")
+        return
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
     files = sorted(
         [f for f in os.listdir(output_dir) if f.endswith(".md")],
         reverse=True,
@@ -42,7 +59,11 @@ def list_outputs(output_dir: str):
         print("  No extracted files yet.\n")
         return
     print(f"\n  {'#':<4} {'File':<55} {'Size'}")
+<<<<<<< HEAD
     print("  " + "-" * 70)
+=======
+    print("  " + "-" * 72)
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
     for i, fname in enumerate(files, 1):
         path = os.path.join(output_dir, fname)
         size = os.path.getsize(path)
@@ -76,7 +97,11 @@ def run_interactive(orchestrator: Orchestrator):
             print(HELP_TEXT)
 
         elif user_input.lower() == "list":
+<<<<<<< HEAD
             list_outputs(orchestrator.writer.output_dir)
+=======
+            list_outputs(orchestrator.output_dir)
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
 
         elif user_input.lower() == "clear":
             os.system("clear")
@@ -96,10 +121,16 @@ def run_interactive(orchestrator: Orchestrator):
 
 
 def main():
+<<<<<<< HEAD
     output_dir = "output"
     orchestrator = Orchestrator(output_dir=output_dir)
 
     # Non-interactive mode: URL passed as argument
+=======
+    orchestrator = Orchestrator(output_dir="output")
+
+    # Non-interactive: URL passed as CLI argument
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
     if len(sys.argv) == 2:
         url = sys.argv[1]
         if not is_valid_url(url):
@@ -109,7 +140,11 @@ def main():
         print(f"Done: {output_path}")
         return
 
+<<<<<<< HEAD
     # Interactive mode
+=======
+    # Interactive REPL
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
     run_interactive(orchestrator)
 
 

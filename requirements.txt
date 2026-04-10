@@ -1,3 +1,8 @@
+<<<<<<< HEAD
 ollama
+=======
+langgraph
+langchain-ollama
+>>>>>>> 9eb58f0d93e89e69838ab82fa775a1f194452183
 requests
 beautifulsoup4
