@@ -164,6 +164,31 @@ def list_datasets(
         )
     console.print(table)
 
+    if remote:
+        from huggingface_hub import HfApi
+        console.print(f"\n[bold]Published datasets on HuggingFace ({cfg.HF_REPO_ID}):[/bold]")
+        try:
+            api = HfApi()
+            files = list(api.list_repo_files(cfg.HF_REPO_ID, repo_type="dataset"))
+            # Paths look like: datasets/{name}/splits.json
+            published = sorted({
+                f.split("/")[1]
+                for f in files
+                if f.startswith("datasets/") and f.endswith("/splits.json")
+            })
+            if published:
+                remote_table = Table()
+                remote_table.add_column("Dataset", style="cyan")
+                remote_table.add_column("HF URL", style="dim")
+                for name in published:
+                    url = f"https://huggingface.co/datasets/{cfg.HF_REPO_ID}/tree/main/datasets/{name}"
+                    remote_table.add_row(name, url)
+                console.print(remote_table)
+            else:
+                console.print("  [dim]No datasets published yet.[/dim]")
+        except Exception as e:
+            console.print(f"  [red]Could not reach HuggingFace: {e}[/red]")
+
     if local:
         local_dir = cfg.DATA_DIR
         console.print(f"\n[dim]Local cache: {local_dir}[/dim]")
