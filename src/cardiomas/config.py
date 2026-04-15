@@ -18,7 +18,7 @@ def _env_path(key: str, default: str) -> Path:
 
 # ── Local LLM ──────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL: str = _env("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MODEL: str = _env("OLLAMA_MODEL", "gemma4:2b")
 
 # ── Per-agent LLM overrides ────────────────────────────────────────────────
 # Format: AGENT_LLM_<AGENT>=model  e.g. AGENT_LLM_CODER=deepseek-coder:6.7b
@@ -45,7 +45,7 @@ def set_agent_llm(agent_name: str, model: str) -> None:
 
 # ── Context compression ────────────────────────────────────────────────────
 CONTEXT_COMPRESS_THRESHOLD: int = int(_env("CONTEXT_COMPRESS_THRESHOLD", "6000"))
-CONTEXT_COMPRESS_MODEL: str = _env("CONTEXT_COMPRESS_MODEL", "gemma3:4b")
+CONTEXT_COMPRESS_MODEL: str = _env("CONTEXT_COMPRESS_MODEL", "gemma4:2b")
 
 # ── Cloud LLM (optional) ───────────────────────────────────────────────────
 CLOUD_LLM_PROVIDER: str = _env("CLOUD_LLM_PROVIDER", "none")  # none | openai | anthropic

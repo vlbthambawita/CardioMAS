@@ -15,41 +15,73 @@ flowchart TD
     cardiomas analyze`"])
     CLI --> ORCH
 
-    subgraph PIPELINE ["LangGraph Pipeline"]
-        ORCH["🎯 Orchestrator
-        Check HF cache"]
+    subgraph PIPELINE ["LangGraph Pipeline — V2 Hub-and-Spoke"]
+        ORCH(["🎯 **Orchestrator**
+        Dynamic routing hub
+        sets next_agent each turn"])
 
-        ORCH -->|cache hit| EXISTING["Return existing\nsplits from HF"]
-        ORCH -->|no cache / --force| DISC
+        %% Worker agents (spokes)
+        NL["📝 NL Requirement
+        Parse natural-language
+        user requirements"]
 
-        DISC["🔍 Discovery Agent
-        Identify dataset type,\nsource, metadata"]
+        DISC["🔍 Discovery
+        Identify dataset type,
+        source & metadata"]
 
-        PAPER["📄 Paper Agent
-        Find & parse paper\nExtract split methodology"]
+        PAPER["📄 Paper
+        Find & parse paper
+        Extract split methodology"]
 
-        ANALYSIS["📊 Analysis Agent
-        Scan files, parse CSV metadata\nCompute statistics"]
+        ANALYSIS["📊 Analysis
+        Scan files, parse CSV
+        Compute statistics"]
 
-        SPLIT["✂️ Splitter Agent
-        SHA-256 seeded deterministic splits\nPatient-level / stratified"]
+        SPLIT["✂️ Splitter
+        SHA-256 seeded
+        deterministic splits"]
 
-        SEC["🔒 Security Agent
-        PII scan · raw-data check\nPatient leakage detection"]
+        SEC["🔒 Security
+        PII scan · raw-data
+        Patient leakage check"]
 
-        PUB["☁️ Publisher Agent
-        Push to HF · Update GitHub README"]
+        CODER["💻 Coder
+        Generate custom
+        split code"]
 
-        DISC --> PAPER --> ANALYSIS --> SPLIT --> SEC
+        PUB["☁️ Publisher
+        Push to HF
+        Update GitHub README"]
 
-        SEC -->|audit failed| ERR["❌ End with error\nBlocked — not saved"]
-        SEC -->|passed, no --push| SAVED["💾 Saved locally"]
-        SEC -->|passed + --push| PUB
-        PUB --> HF[("HuggingFace\nvlbthambawita/ECGBench")]
+        %% Orchestrator → workers (dispatch)
+        ORCH -->|dispatch| NL
+        ORCH -->|dispatch| DISC
+        ORCH -->|dispatch| PAPER
+        ORCH -->|dispatch| ANALYSIS
+        ORCH -->|dispatch| SPLIT
+        ORCH -->|dispatch| SEC
+        ORCH -->|dispatch| CODER
+        ORCH -->|dispatch| PUB
+
+        %% Workers → Orchestrator (return)
+        NL -->|done| ORCH
+        DISC -->|done| ORCH
+        PAPER -->|done| ORCH
+        ANALYSIS -->|done| ORCH
+        SPLIT -->|done| ORCH
+        SEC -->|done| ORCH
+        CODER -->|done| ORCH
+        PUB -->|done| ORCH
+
+        %% Terminal routes from orchestrator
+        ORCH -->|cache hit| EXISTING["↩ Return existing\nsplits from HF"]
+        ORCH -->|audit failed| ERR["❌ End with error\nBlocked — not saved"]
+        ORCH -->|pipeline done| SAVED["💾 End — saved locally"]
     end
 
+    PUB -.->|if --push| HF[("HuggingFace
+    vlbthambawita/ECGBench")]
     SAVED --> OUT
-    PUB --> OUT
 
     OUT["`**output/&lt;dataset&gt;/**
     splits.json
@@ -57,12 +89,14 @@ flowchart TD
     analysis_report.md`"]
 
     style PIPELINE fill:#1a1a2e,stroke:#4a9eff,color:#fff
-    style ORCH fill:#0f4c75,stroke:#4a9eff,color:#fff
+    style ORCH fill:#0f3460,stroke:#4a9eff,color:#fff,shape:stadium
+    style NL fill:#2d1b4e,stroke:#9b59b6,color:#fff
     style DISC fill:#1b4332,stroke:#40916c,color:#fff
     style PAPER fill:#3b1f5e,stroke:#9b59b6,color:#fff
     style ANALYSIS fill:#7b4220,stroke:#e67e22,color:#fff
     style SPLIT fill:#1a5276,stroke:#2e86c1,color:#fff
     style SEC fill:#641e16,stroke:#e74c3c,color:#fff
+    style CODER fill:#1a3a4a,stroke:#00bcd4,color:#fff
     style PUB fill:#145a32,stroke:#27ae60,color:#fff
     style SAVED fill:#1a3a1a,stroke:#27ae60,color:#fff
     style ERR fill:#3b0f0f,stroke:#e74c3c,color:#fff
@@ -72,15 +106,15 @@ flowchart TD
     style CLI fill:#0d0d0d,stroke:#4a9eff,color:#fff
 ```
 
-Each node is a dedicated LLM-backed agent. Agents communicate only through the shared `GraphState`. The security agent is a hard gate — publishing is blocked if any check fails.
+Each node is a dedicated LLM-backed agent. The **orchestrator** is the central hub — it dynamically decides which agent to invoke next after each agent completes (hub-and-spoke pattern). Every worker agent returns to the orchestrator after finishing. Agents communicate only through the shared `GraphState`. The security agent is a hard gate — publishing is blocked if any check fails.
 
 ## Requirements
 
 - Python ≥ 3.10
-- [Ollama](https://ollama.com/) running locally with a model pulled (default: `llama3.1:8b`)
+- [Ollama](https://ollama.com/) running locally with a model pulled (default: `gemma4:2b`)
 
 ```bash
-ollama pull llama3.1:8b
+ollama pull gemma4:2b
 ollama serve
 pip install cardiomas
 ```
@@ -232,7 +266,7 @@ Only record identifiers are ever published — no raw ECG signals, no patient da
 ```python
 from cardiomas import CardioMAS
 
-mas = CardioMAS(ollama_model="llama3.1:8b", seed=42)
+mas = CardioMAS(ollama_model="gemma4:2b", seed=42)
 
 # Analyze and save locally
 result = mas.analyze("/data/ptb-xl/")
@@ -260,21 +294,20 @@ Any model available in Ollama works. Pull a model, then point CardioMAS at it:
 
 ```bash
 # Default (recommended for full pipeline)
-ollama pull llama3.1:8b
+ollama pull gemma4:2b
 
-# Gemma models (Google) — lighter, fast on CPU
-ollama pull gemma3:4b
-ollama pull gemma3:12b
-ollama pull gemma3:27b
+# Larger Gemma 4 variants for heavier reasoning tasks
+ollama pull gemma4:12b
+ollama pull gemma4:27b
 
 # DeepSeek Coder — best for the coding agent
 ollama pull deepseek-coder:6.7b
 
 # Use a specific model for the whole pipeline
-OLLAMA_MODEL=gemma3:4b cardiomas analyze /data/ptb-xl/
+OLLAMA_MODEL=gemma4:2b cardiomas analyze /data/ptb-xl/
 
 # Or set it permanently in .env
-echo "OLLAMA_MODEL=gemma3:4b" >> .env
+echo "OLLAMA_MODEL=gemma4:2b" >> .env
 ```
 
 ## Per-Agent LLM Configuration
@@ -287,18 +320,18 @@ Each agent can use a different LLM. This is useful when you want a fast, lightwe
 
 ```bash
 # Fallback for all agents
-OLLAMA_MODEL=llama3.1:8b
+OLLAMA_MODEL=gemma4:2b
 
 # Per-agent overrides (all optional)
-AGENT_LLM_ORCHESTRATOR=llama3.1:8b
-AGENT_LLM_NL_REQUIREMENT=gemma3:4b
-AGENT_LLM_DISCOVERY=gemma3:4b
-AGENT_LLM_PAPER=llama3.1:8b
-AGENT_LLM_ANALYSIS=llama3.1:8b
-AGENT_LLM_SPLITTER=gemma3:4b
-AGENT_LLM_SECURITY=gemma3:4b
+AGENT_LLM_ORCHESTRATOR=gemma4:2b
+AGENT_LLM_NL_REQUIREMENT=gemma4:2b
+AGENT_LLM_DISCOVERY=gemma4:2b
+AGENT_LLM_PAPER=gemma4:2b
+AGENT_LLM_ANALYSIS=gemma4:2b
+AGENT_LLM_SPLITTER=gemma4:2b
+AGENT_LLM_SECURITY=gemma4:2b
 AGENT_LLM_CODER=deepseek-coder:6.7b
-AGENT_LLM_PUBLISHER=gemma3:4b
+AGENT_LLM_PUBLISHER=gemma4:2b
 ```
 
 Set these in `.env` or export them before running `cardiomas`.
@@ -308,8 +341,8 @@ Set these in `.env` or export them before running `cardiomas`.
 ```bash
 cardiomas analyze /data/ptb-xl/ \
   --llm-coder deepseek-coder:6.7b \
-  --llm-analysis llama3.1:8b \
-  --llm-discovery gemma3:4b
+  --llm-analysis gemma4:12b \
+  --llm-discovery gemma4:2b
 ```
 
 ### Via Python API
@@ -320,8 +353,8 @@ from cardiomas import CardioMAS
 mas = CardioMAS(
     agent_llms={
         "coder":    "deepseek-coder:6.7b",
-        "analysis": "llama3.1:8b",
-        "default":  "gemma3:4b",   # fallback for all other agents
+        "analysis": "gemma4:12b",
+        "default":  "gemma4:2b",   # fallback for all other agents
     }
 )
 mas.analyze("/data/ptb-xl/")
@@ -331,22 +364,22 @@ mas.analyze("/data/ptb-xl/")
 
 | Agent | Recommended model | Why |
 |---|---|---|
-| `orchestrator` | `llama3.1:8b` | Reasoning-heavy routing decisions |
-| `nl_requirement` | `gemma3:4b` | Simple parsing task |
-| `discovery` | `gemma3:4b` | Lookup + classification |
-| `paper` | `llama3.1:8b` | Needs to read and summarise papers |
-| `analysis` | `llama3.1:8b` or `llama3.1:70b` | Statistical reasoning |
-| `splitter` | `gemma3:4b` | Deterministic — LLM role is minimal |
-| `security` | `gemma3:4b` | Pattern matching |
+| `orchestrator` | `gemma4:2b` | Default — dynamic routing decisions |
+| `nl_requirement` | `gemma4:2b` | Simple parsing task |
+| `discovery` | `gemma4:2b` | Lookup + classification |
+| `paper` | `gemma4:2b` or `gemma4:12b` | Needs to read and summarise papers |
+| `analysis` | `gemma4:2b` or `gemma4:12b` | Statistical reasoning |
+| `splitter` | `gemma4:2b` | Deterministic — LLM role is minimal |
+| `security` | `gemma4:2b` | Pattern matching |
 | `coder` | `deepseek-coder:6.7b` | Code generation |
-| `publisher` | `gemma3:4b` | Structured output |
+| `publisher` | `gemma4:2b` | Structured output |
 
 ### Verbose LLM name display
 
 With `--verbose`, each LLM call shows the model name and backend:
 
 ```
-──────────── paper — LLM call [llama3.1:8b @ ollama] ────────────
+──────────── paper — LLM call [gemma4:2b @ ollama] ────────────
 ```
 
 ## Environment Variables
@@ -355,7 +388,7 @@ Copy `.env.example` to `.env` and fill in as needed.
 
 | Variable | Required for | Default |
 |---|---|---|
-| `OLLAMA_MODEL` | local LLM (default for all agents) | `llama3.1:8b` |
+| `OLLAMA_MODEL` | local LLM (default for all agents) | `gemma4:2b` |
 | `OLLAMA_BASE_URL` | local LLM | `http://localhost:11434` |
 | `AGENT_LLM_<AGENT>` | per-agent model override | *(falls back to `OLLAMA_MODEL`)* |
 | `HF_TOKEN` | `--push` / `cardiomas push` | — |
