@@ -84,7 +84,6 @@ def discovery_agent(state: GraphState) -> GraphState:
         source_url=source if source.startswith("http") else None,
         description=page_data.get("title", ""),
         paper_url=output.paper_url,
-        official_splits=output.official_splits,
         num_records=output.num_records,
         ecg_id_field=output.ecg_id_field,
         sampling_rate=output.sampling_rate_hz,
