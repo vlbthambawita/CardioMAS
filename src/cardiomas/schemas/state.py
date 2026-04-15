@@ -21,7 +21,7 @@ class UserOptions(BaseModel):
     ignore_official: bool = False
     stratify_by: str | None = None
     verbose: bool = False
-    dry_run: bool = False
+    push_to_hf: bool = False  # explicit opt-in; requires HF_TOKEN
 
 
 class LogEntry(BaseModel):
@@ -41,6 +41,7 @@ class GraphState(BaseModel):
     proposed_splits: SplitManifest | None = None
     security_audit: SecurityAudit | None = None
     publish_status: str = "pending"
+    local_output_dir: str = ""   # set by splitter_agent after saving locally
     user_options: UserOptions = Field(default_factory=UserOptions.model_construct)
     execution_log: list[LogEntry] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

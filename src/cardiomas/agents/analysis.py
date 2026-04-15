@@ -87,6 +87,15 @@ def analysis_agent(state: GraphState) -> GraphState:
         "report": report_text,
         "id_field": info.ecg_id_field if info else "record_id",
     }
+
+    # ── Save analysis report locally ──────────────────────────────────────
+    dataset_name = info.name if info else "unknown"
+    out_dir = Path(opts.output_dir) / dataset_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_file = out_dir / "analysis_report.md"
+    report_file.write_text(f"# Analysis Report — {dataset_name}\n\n{report_text}\n")
+    vprint("analysis", f"saved report → {report_file}")
+
     state.execution_log.append(LogEntry(agent="analysis", action="complete", detail=f"{len(files)} files"))
     vprint("analysis", f"complete — {len(files)} files, {len(metadata_sample)} metadata CSV(s)")
     return state

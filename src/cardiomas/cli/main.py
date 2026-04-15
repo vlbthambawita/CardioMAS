@@ -22,18 +22,18 @@ console = Console()
 def analyze(
     dataset_source: Annotated[str, typer.Argument(help="URL (HF, PhysioNet, etc.) or local path")],
     local_path: Annotated[Optional[str], typer.Option("--local-path", help="Explicit local data path (skip download)")] = None,
-    output_dir: Annotated[str, typer.Option("--output-dir")] = "output",
-    force: Annotated[bool, typer.Option("--force-reanalysis", help="Re-run even if HF already has results")] = False,
+    output_dir: Annotated[str, typer.Option("--output-dir", help="Local directory for analysis report and splits")] = "output",
+    force: Annotated[bool, typer.Option("--force-reanalysis", help="Re-run even if already analyzed")] = False,
     use_cloud_llm: Annotated[bool, typer.Option("--use-cloud-llm")] = False,
     seed: Annotated[int, typer.Option("--seed")] = 42,
     custom_split: Annotated[Optional[str], typer.Option("--custom-split", help="e.g. 'train:0.7,val:0.15,test:0.15'")] = None,
     ignore_official: Annotated[bool, typer.Option("--ignore-official")] = False,
     stratify_by: Annotated[Optional[str], typer.Option("--stratify-by")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    push: Annotated[bool, typer.Option("--push", help="Push results to HuggingFace (requires HF_TOKEN)")] = False,
     output_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    """Analyze an ECG dataset and publish reproducible splits to HuggingFace."""
+    """Analyze an ECG dataset and save splits locally. Use --push to publish to HuggingFace."""
     from cardiomas.schemas.state import UserOptions
     from cardiomas.graph.workflow import run_pipeline
 
@@ -60,7 +60,7 @@ def analyze(
         ignore_official=ignore_official,
         stratify_by=stratify_by,
         verbose=verbose,
-        dry_run=dry_run,
+        push_to_hf=push,
     )
 
     from cardiomas.verbose import enable as verbose_enable
@@ -97,18 +97,92 @@ def analyze(
             table.add_row(split_name, str(len(ids)), ratio)
         console.print(table)
 
+    if state.local_output_dir:
+        console.print(f"\n[cyan]Saved locally:[/cyan] {state.local_output_dir}/")
+        console.print(f"  splits.json, split_metadata.json, analysis_report.md")
+        if not push:
+            console.print(f"\n[dim]To publish to HuggingFace: cardiomas push {state.proposed_splits.dataset_name if state.proposed_splits else '<name>'}[/dim]")
+
     if state.publish_status == "ok":
         console.print(f"[green]Published to HuggingFace: vlbthambawita/ECGBench[/green]")
-    elif state.publish_status == "dry_run":
-        console.print("[yellow]Dry-run mode — nothing published.[/yellow]")
     elif state.publish_status == "already_published":
-        console.print("[blue]Dataset already published on HF. Use --force-reanalysis to overwrite.[/blue]")
+        console.print("[blue]Dataset already on HF. Use --force-reanalysis to overwrite.[/blue]")
 
     if verbose:
         from rich.rule import Rule
         console.print(Rule("[dim]execution log[/dim]"))
         for entry in state.execution_log:
             console.print(f"  [dim]{entry.timestamp.strftime('%H:%M:%S')} [{entry.agent}] {entry.action}: {entry.detail}[/dim]")
+
+
+@app.command()
+def push(
+    dataset_name: Annotated[str, typer.Argument(help="Dataset name matching a local output directory")],
+    output_dir: Annotated[str, typer.Option("--output-dir")] = "output",
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Push locally saved splits to HuggingFace vlbthambawita/ECGBench. Requires HF_TOKEN."""
+    import json as _json
+    from pathlib import Path
+    from cardiomas import config as cfg
+    from cardiomas.tools.security_tools import validate_split_file
+    from cardiomas.tools.publishing_tools import push_to_hf
+    from cardiomas.publishing.github_updater import update_github_page
+
+    if not cfg.HF_TOKEN:
+        console.print("[red]HF_TOKEN is not set. Run: export HF_TOKEN=<your_token>[/red]")
+        raise typer.Exit(1)
+
+    dataset_dir = Path(output_dir) / dataset_name
+    splits_file = dataset_dir / "splits.json"
+    meta_file   = dataset_dir / "split_metadata.json"
+    report_file = dataset_dir / "analysis_report.md"
+
+    if not splits_file.exists():
+        console.print(f"[red]No local splits found at {splits_file}[/red]")
+        console.print(f"Run [cyan]cardiomas analyze {dataset_name}[/cyan] first.")
+        raise typer.Exit(1)
+
+    # Security check before pushing
+    with console.status("Running security audit…"):
+        validation = validate_split_file.invoke({"path": str(splits_file)})
+
+    if not validation["valid"]:
+        console.print("[red]Security audit failed — not pushing:[/red]")
+        for issue in validation["issues"]:
+            console.print(f"  [red]✗[/red] {issue}")
+        raise typer.Exit(1)
+
+    console.print("[green]✓[/green] Security audit passed")
+
+    # Build file map for upload
+    files: dict[str, str] = {
+        f"datasets/{dataset_name}/splits.json": str(splits_file),
+    }
+    if meta_file.exists():
+        files[f"datasets/{dataset_name}/split_metadata.json"] = str(meta_file)
+    if report_file.exists():
+        files[f"datasets/{dataset_name}/analysis_report.md"] = str(report_file)
+
+    with console.status(f"Pushing {len(files)} file(s) to {cfg.HF_REPO_ID}…"):
+        result = push_to_hf.invoke({
+            "repo_id": cfg.HF_REPO_ID,
+            "files": files,
+            "commit_message": f"add splits for {dataset_name}",
+        })
+
+    if output_json:
+        rprint(_json.dumps(result, indent=2))
+        return
+
+    if result["status"] == "ok":
+        hf_url = result.get("url", "")
+        console.print(f"[green]Published:[/green] {hf_url}")
+        update_github_page(dataset_name, hf_url)
+        console.print("[green]GitHub README updated.[/green]")
+    else:
+        console.print(f"[red]Push failed:[/red] {result.get('error', '?')}")
+        raise typer.Exit(1)
 
 
 @app.command()

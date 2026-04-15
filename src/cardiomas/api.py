@@ -32,27 +32,30 @@ class CardioMAS:
     def analyze(
         self,
         source: str,
+        output_dir: str = "output",
         force: bool = False,
         use_cloud_llm: bool | None = None,
         custom_split: dict[str, float] | None = None,
         ignore_official: bool = False,
         stratify_by: str | None = None,
-        dry_run: bool = False,
+        push_to_hf: bool = False,
         local_path: str | None = None,
     ) -> dict[str, Any]:
-        """Run full pipeline on a dataset source. Returns final state as dict."""
+        """Run full pipeline on a dataset source. Saves outputs locally.
+        Set push_to_hf=True to also publish to HuggingFace (requires HF_TOKEN)."""
         from cardiomas.graph.workflow import run_pipeline
 
         options = UserOptions(
             dataset_source=source,
             local_path=local_path,
+            output_dir=output_dir,
             force_reanalysis=force,
             use_cloud_llm=use_cloud_llm if use_cloud_llm is not None else self.use_cloud_llm,
             seed=self.seed,
             custom_split=custom_split,
             ignore_official=ignore_official,
             stratify_by=stratify_by,
-            dry_run=dry_run,
+            push_to_hf=push_to_hf,
         )
         state = run_pipeline(source, options)
         return state.model_dump(mode="json")

@@ -27,9 +27,9 @@ def _route_after_orchestrator(state: GraphState) -> str:
 def _route_after_security(state: GraphState) -> str:
     if state.security_audit and not state.security_audit.passed:
         return "end_with_error"
-    if state.user_options.dry_run:
-        return "end_dry_run"
-    return "publisher"
+    if state.user_options.push_to_hf:
+        return "publisher"
+    return "end_saved"  # default: saved locally, no HF push
 
 
 def _passthrough_return_existing(state: GraphState) -> GraphState:
@@ -46,11 +46,14 @@ def _passthrough_end_error(state: GraphState) -> GraphState:
     return state
 
 
-def _passthrough_end_dry_run(state: GraphState) -> GraphState:
-    """End after dry-run."""
+def _passthrough_end_saved(state: GraphState) -> GraphState:
+    """Default end: outputs saved locally, no HF push requested."""
     from cardiomas.schemas.state import LogEntry
-    state.publish_status = "dry_run"
-    state.execution_log.append(LogEntry(agent="orchestrator", action="dry_run_complete"))
+    state.publish_status = "saved_locally"
+    state.execution_log.append(LogEntry(
+        agent="orchestrator", action="saved_locally",
+        detail=state.local_output_dir,
+    ))
     return state
 
 
@@ -90,7 +93,7 @@ def build_workflow():
     graph.add_node("security", wrap(security_agent))
     graph.add_node("publisher", wrap(publisher_agent))
     graph.add_node("end_with_error", wrap(_passthrough_end_error))
-    graph.add_node("end_dry_run", wrap(_passthrough_end_dry_run))
+    graph.add_node("end_saved", wrap(_passthrough_end_saved))
 
     graph.set_entry_point("orchestrator")
 
@@ -107,11 +110,11 @@ def build_workflow():
     graph.add_conditional_edges(
         "security",
         route_after_sec,
-        {"publisher": "publisher", "end_with_error": "end_with_error", "end_dry_run": "end_dry_run"},
+        {"publisher": "publisher", "end_with_error": "end_with_error", "end_saved": "end_saved"},
     )
     graph.add_edge("publisher", END)
     graph.add_edge("end_with_error", END)
-    graph.add_edge("end_dry_run", END)
+    graph.add_edge("end_saved", END)
 
     return graph.compile()
 

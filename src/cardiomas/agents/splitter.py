@@ -10,6 +10,7 @@ from cardiomas import __version__
 from cardiomas.agents.base import run_agent
 from cardiomas.schemas.split import SplitManifest, ReproducibilityConfig
 from cardiomas.schemas.state import GraphState, LogEntry
+from cardiomas.verbose import vprint
 from cardiomas.splitters.strategies import (
     PatientStratifiedSplit,
     RecordStratifiedSplit,
@@ -115,7 +116,31 @@ def splitter_agent(state: GraphState) -> GraphState:
     )
 
     state.proposed_splits = manifest
+
+    # ── Save outputs locally ──────────────────────────────────────────────
+    out_dir = Path(opts.output_dir) / manifest.dataset_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    splits_file = out_dir / "splits.json"
+    meta_file   = out_dir / "split_metadata.json"
+
+    splits_payload = {
+        "dataset_name":          manifest.dataset_name,
+        "split_version":         manifest.split_version,
+        "cardiomas_version":     manifest.cardiomas_version,
+        "reproducibility_config": repro.model_dump(mode="json"),
+        "splits":                splits,
+        "split_stats":           manifest.split_stats,
+    }
+    splits_file.write_text(json.dumps(splits_payload, indent=2))
+    meta_file.write_text(json.dumps(repro.model_dump(mode="json"), indent=2))
+
+    state.local_output_dir = str(out_dir)
+    vprint("splitter", f"saved splits → {splits_file}")
+    vprint("splitter", f"saved metadata → {meta_file}")
+
     state.execution_log.append(
-        LogEntry(agent="splitter", action="complete", detail=f"{len(record_ids)} records → {list(splits.keys())}")
+        LogEntry(agent="splitter", action="complete",
+                 detail=f"{len(record_ids)} records → {list(splits.keys())} → {out_dir}")
     )
     return state
