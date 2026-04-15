@@ -20,25 +20,36 @@ console = Console()
 
 @app.command()
 def analyze(
-    dataset_source: Annotated[str, typer.Argument(help="URL (HF, PhysioNet, etc.) or local path")],
-    local_path: Annotated[Optional[str], typer.Option("--local-path", help="Explicit local data path (skip download)")] = None,
-    output_dir: Annotated[str, typer.Option("--output-dir", help="Local directory for analysis report and splits")] = "output",
-    force: Annotated[bool, typer.Option("--force-reanalysis", help="Re-run even if already analyzed")] = False,
+    dataset_source: Annotated[str, typer.Argument(help="URL (HF, PhysioNet) or local path")],
+    local_path: Annotated[Optional[str], typer.Option("--local-path", help="Explicit local data path")] = None,
+    output_dir: Annotated[str, typer.Option("--output-dir")] = "output",
+    force: Annotated[bool, typer.Option("--force-reanalysis")] = False,
     use_cloud_llm: Annotated[bool, typer.Option("--use-cloud-llm")] = False,
     seed: Annotated[int, typer.Option("--seed")] = 42,
-    custom_split: Annotated[Optional[str], typer.Option("--custom-split", help="e.g. 'train:0.7,val:0.15,test:0.15'")] = None,
+    custom_split: Annotated[Optional[str], typer.Option("--custom-split", help="e.g. train:0.7,val:0.15,test:0.15")] = None,
     ignore_official: Annotated[bool, typer.Option("--ignore-official")] = False,
     stratify_by: Annotated[Optional[str], typer.Option("--stratify-by")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
-    push: Annotated[bool, typer.Option("--push", help="Push results to HuggingFace (requires HF_TOKEN)")] = False,
+    push: Annotated[bool, typer.Option("--push", help="Publish to HuggingFace (requires HF_TOKEN)")] = False,
     output_json: Annotated[bool, typer.Option("--json")] = False,
+    # V2 options
+    requirement: Annotated[Optional[str], typer.Option("--requirement", "-r", help="Natural language requirement (V2)")] = None,
+    llm_orchestrator: Annotated[Optional[str], typer.Option("--llm-orchestrator", help="Model for orchestrator agent")] = None,
+    llm_nl_requirement: Annotated[Optional[str], typer.Option("--llm-nl-requirement", help="Model for nl_requirement agent")] = None,
+    llm_discovery: Annotated[Optional[str], typer.Option("--llm-discovery", help="Model for discovery agent")] = None,
+    llm_paper: Annotated[Optional[str], typer.Option("--llm-paper", help="Model for paper agent")] = None,
+    llm_analysis: Annotated[Optional[str], typer.Option("--llm-analysis", help="Model for analysis agent")] = None,
+    llm_splitter: Annotated[Optional[str], typer.Option("--llm-splitter", help="Model for splitter agent")] = None,
+    llm_security: Annotated[Optional[str], typer.Option("--llm-security", help="Model for security agent")] = None,
+    llm_coder: Annotated[Optional[str], typer.Option("--llm-coder", help="Model for coder agent")] = None,
+    llm_publisher: Annotated[Optional[str], typer.Option("--llm-publisher", help="Model for publisher agent")] = None,
 ) -> None:
     """Analyze an ECG dataset and save splits locally. Use --push to publish to HuggingFace."""
     from cardiomas.schemas.state import UserOptions
     from cardiomas.graph.workflow import run_pipeline
 
     # Parse custom split
-    custom_split_dict = None
+    custom_split_dict: dict | None = None
     if custom_split:
         try:
             custom_split_dict = {}
@@ -48,6 +59,26 @@ def analyze(
         except Exception:
             typer.echo(f"Invalid --custom-split format: {custom_split}", err=True)
             raise typer.Exit(1)
+
+    # Build per-agent LLM map from CLI flags
+    agent_llm_map: dict[str, str] = {}
+    _agent_flag_map = {
+        "orchestrator":   llm_orchestrator,
+        "nl_requirement": llm_nl_requirement,
+        "discovery":      llm_discovery,
+        "paper":          llm_paper,
+        "analysis":       llm_analysis,
+        "splitter":       llm_splitter,
+        "security":       llm_security,
+        "coder":          llm_coder,
+        "publisher":      llm_publisher,
+    }
+    for agent, model in _agent_flag_map.items():
+        if model:
+            agent_llm_map[agent] = model
+            # Also apply at config level for env-var-based resolution
+            import cardiomas.config as _cfg
+            _cfg.set_agent_llm(agent, model)
 
     options = UserOptions(
         dataset_source=dataset_source,
@@ -61,12 +92,18 @@ def analyze(
         stratify_by=stratify_by,
         verbose=verbose,
         push_to_hf=push,
+        requirement=requirement,
+        agent_llm_map=agent_llm_map,
     )
 
     from cardiomas.verbose import enable as verbose_enable
     verbose_enable(verbose)
 
     if verbose:
+        if requirement:
+            console.print(f"[dim]Requirement:[/dim] {requirement}\n")
+        if agent_llm_map:
+            console.print(f"[dim]Per-agent LLMs:[/dim] {agent_llm_map}\n")
         console.print("[dim]Verbose mode on — streaming agent output below.[/dim]\n")
         state = run_pipeline(dataset_source, options)
     else:
@@ -100,19 +137,72 @@ def analyze(
     if state.local_output_dir:
         console.print(f"\n[cyan]Saved locally:[/cyan] {state.local_output_dir}/")
         console.print(f"  splits.json, split_metadata.json, analysis_report.md")
+        if state.generated_scripts:
+            console.print(f"  scripts/  ({', '.join(state.generated_scripts.keys())})")
+        if Path(state.local_output_dir, "session_log").exists():
+            console.print(f"  session_log/  (session.json, conversation.md, reasoning_trace.md)")
         if not push:
-            console.print(f"\n[dim]To publish to HuggingFace: cardiomas push {state.proposed_splits.dataset_name if state.proposed_splits else '<name>'}[/dim]")
+            ds = state.proposed_splits.dataset_name if state.proposed_splits else "<name>"
+            console.print(f"\n[dim]To publish to HuggingFace: cardiomas push {ds}[/dim]")
 
     if state.publish_status == "ok":
-        console.print(f"[green]Published to HuggingFace: vlbthambawita/ECGBench[/green]")
+        console.print("[green]Published to HuggingFace: vlbthambawita/ECGBench[/green]")
     elif state.publish_status == "already_published":
         console.print("[blue]Dataset already on HF. Use --force-reanalysis to overwrite.[/blue]")
+
+    if state.parsed_requirement:
+        pr = state.parsed_requirement
+        if hasattr(pr, "notes") and pr.notes:
+            console.print(f"\n[yellow]Requirement notes:[/yellow] {pr.notes}")
 
     if verbose:
         from rich.rule import Rule
         console.print(Rule("[dim]execution log[/dim]"))
         for entry in state.execution_log:
-            console.print(f"  [dim]{entry.timestamp.strftime('%H:%M:%S')} [{entry.agent}] {entry.action}: {entry.detail}[/dim]")
+            console.print(
+                f"  [dim]{entry.timestamp.strftime('%H:%M:%S')} "
+                f"[{entry.agent}] {entry.action}: {entry.detail}[/dim]"
+            )
+        if state.orchestrator_reasoning:
+            console.print(Rule("[dim]orchestrator reasoning[/dim]"))
+            for r in state.orchestrator_reasoning:
+                console.print(f"  [dim]{r}[/dim]")
+
+
+@app.command()
+def resume(
+    checkpoint_file: Annotated[str, typer.Argument(help="Path to session_checkpoint.json")],
+    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Resume a pipeline from a saved checkpoint file."""
+    from cardiomas.graph.workflow import resume_pipeline
+    from cardiomas.verbose import enable as verbose_enable
+
+    if not Path(checkpoint_file).exists():
+        console.print(f"[red]Checkpoint not found: {checkpoint_file}[/red]")
+        raise typer.Exit(1)
+
+    verbose_enable(verbose)
+    if verbose:
+        console.print(f"[dim]Resuming from {checkpoint_file}[/dim]\n")
+        state = resume_pipeline(checkpoint_file)
+    else:
+        with console.status("[bold green]Resuming CardioMAS pipeline...", spinner="dots"):
+            state = resume_pipeline(checkpoint_file)
+
+    if output_json:
+        rprint(json.dumps(state.model_dump(mode="json"), indent=2, default=str))
+        return
+
+    if state.errors:
+        console.print("[bold red]Pipeline completed with errors:[/bold red]")
+        for err in state.errors:
+            console.print(f"  [red]✗[/red] {err}")
+    else:
+        console.print("[bold green]Pipeline resumed and completed.[/bold green]")
+    if state.local_output_dir:
+        console.print(f"[cyan]Output:[/cyan] {state.local_output_dir}/")
 
 
 @app.command()
@@ -123,7 +213,6 @@ def push(
 ) -> None:
     """Push locally saved splits to HuggingFace vlbthambawita/ECGBench. Requires HF_TOKEN."""
     import json as _json
-    from pathlib import Path
     from cardiomas import config as cfg
     from cardiomas.tools.security_tools import validate_split_file
     from cardiomas.tools.publishing_tools import push_to_hf
@@ -143,7 +232,6 @@ def push(
         console.print(f"Run [cyan]cardiomas analyze {dataset_name}[/cyan] first.")
         raise typer.Exit(1)
 
-    # Security check before pushing
     with console.status("Running security audit…"):
         validation = validate_split_file.invoke({"path": str(splits_file)})
 
@@ -155,7 +243,6 @@ def push(
 
     console.print("[green]✓[/green] Security audit passed")
 
-    # Build file map for upload
     files: dict[str, str] = {
         f"datasets/{dataset_name}/splits.json": str(splits_file),
     }
@@ -205,8 +292,7 @@ def status(
         console.print(f"[green]✓[/green] {dataset_name} found on HuggingFace ({cfg.HF_REPO_ID})")
         meta = result.get("metadata", {})
         if meta:
-            splits = meta.get("splits", {})
-            for split_name, ids in splits.items():
+            for split_name, ids in meta.get("splits", {}).items():
                 console.print(f"  {split_name}: {len(ids)} records")
     else:
         console.print(f"[yellow]✗[/yellow] {dataset_name} not yet published to {cfg.HF_REPO_ID}")
@@ -214,8 +300,8 @@ def status(
 
 @app.command(name="list")
 def list_datasets(
-    remote: Annotated[bool, typer.Option("--remote", help="Show datasets on HuggingFace")] = False,
-    local: Annotated[bool, typer.Option("--local", help="Show locally cached datasets")] = False,
+    remote: Annotated[bool, typer.Option("--remote")] = False,
+    local: Annotated[bool, typer.Option("--local")] = False,
     output_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """List known ECG datasets (registry) and optionally remote/local ones."""
@@ -235,24 +321,19 @@ def list_datasets(
     table.add_column("Records", justify="right")
     table.add_column("Leads", justify="right")
     table.add_column("Fs (Hz)", justify="right")
-
     for d in datasets:
         table.add_row(
-            d.name,
-            d.source_type.value,
-            str(d.num_records or "?"),
-            str(d.num_leads or "?"),
-            str(d.sampling_rate or "?"),
+            d.name, d.source_type.value,
+            str(d.num_records or "?"), str(d.num_leads or "?"), str(d.sampling_rate or "?"),
         )
     console.print(table)
 
     if remote:
         from huggingface_hub import HfApi
-        console.print(f"\n[bold]Published datasets on HuggingFace ({cfg.HF_REPO_ID}):[/bold]")
+        console.print(f"\n[bold]Published on HuggingFace ({cfg.HF_REPO_ID}):[/bold]")
         try:
             api = HfApi()
             files = list(api.list_repo_files(cfg.HF_REPO_ID, repo_type="dataset"))
-            # Paths look like: datasets/{name}/splits.json
             published = sorted({
                 f.split("/")[1]
                 for f in files
@@ -284,8 +365,8 @@ def list_datasets(
 
 @app.command()
 def config(
-    show: Annotated[bool, typer.Option("--show", help="Show current configuration")] = False,
-    set_key: Annotated[Optional[str], typer.Option("--set", help="KEY=VALUE to set")] = None,
+    show: Annotated[bool, typer.Option("--show")] = False,
+    set_key: Annotated[Optional[str], typer.Option("--set", help="KEY=VALUE")] = None,
 ) -> None:
     """View or update CardioMAS configuration."""
     import cardiomas.config as cfg_module
@@ -299,10 +380,16 @@ def config(
         console.print(f"  GITHUB_REPO      = {cfg_module.GITHUB_REPO}")
         console.print(f"  DATA_DIR         = {cfg_module.DATA_DIR}")
         console.print(f"  SEED             = {cfg_module.SEED}")
+        console.print(f"  COMPRESS_MODEL   = {cfg_module.CONTEXT_COMPRESS_MODEL}")
+        console.print(f"  COMPRESS_THRESH  = {cfg_module.CONTEXT_COMPRESS_THRESHOLD}")
         hf_ok = "[green]set[/green]" if cfg_module.HF_TOKEN else "[red]not set[/red]"
         gh_ok = "[green]set[/green]" if cfg_module.GITHUB_TOKEN else "[red]not set[/red]"
         console.print(f"  HF_TOKEN         = {hf_ok}")
         console.print(f"  GITHUB_TOKEN     = {gh_ok}")
+        if cfg_module._AGENT_LLM_OVERRIDES:
+            console.print("\n  [bold]Per-agent LLM overrides:[/bold]")
+            for agent, model in cfg_module._AGENT_LLM_OVERRIDES.items():
+                console.print(f"    {agent} = {model}")
         return
 
     if set_key:
@@ -326,10 +413,10 @@ def config(
 @app.command()
 def contribute(
     dataset_name: Annotated[str, typer.Argument(help="Dataset name")],
-    split_file: Annotated[str, typer.Option("--split-file", help="Path to your splits JSON")] = "",
+    split_file: Annotated[str, typer.Option("--split-file")] = "",
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    """Package and submit community splits to vlbthambawita/ECGBench via PR."""
+    """Package and submit community splits to vlbthambawita/ECGBench."""
     from cardiomas.tools.security_tools import validate_split_file as validate
     from cardiomas.tools.publishing_tools import push_to_hf
     from cardiomas import config as cfg
@@ -338,7 +425,6 @@ def contribute(
         typer.echo(f"Split file not found: {split_file}", err=True)
         raise typer.Exit(1)
 
-    # Validate
     with console.status("Validating split file..."):
         validation = validate.invoke({"path": split_file})
 
@@ -354,7 +440,6 @@ def contribute(
         console.print("[yellow]Dry-run mode — not pushing.[/yellow]")
         return
 
-    # Push
     result = push_to_hf.invoke({
         "repo_id": cfg.HF_REPO_ID,
         "files": {f"datasets/{dataset_name}/community_splits.json": split_file},
@@ -369,10 +454,10 @@ def contribute(
 
 @app.command()
 def verify(
-    dataset_name: Annotated[str, typer.Argument(help="Dataset name to verify")],
+    dataset_name: Annotated[str, typer.Argument(help="Dataset name")],
     seed: Annotated[int, typer.Option("--seed")] = 42,
 ) -> None:
-    """Re-run split generation and compare against published splits to confirm reproducibility."""
+    """Re-check reproducibility metadata of published splits."""
     from cardiomas import config as cfg
     from cardiomas.tools.publishing_tools import check_hf_repo
 
@@ -391,9 +476,9 @@ def verify(
         console.print(f"[yellow]Seed mismatch: published={pub_seed}, requested={seed}[/yellow]")
 
     console.print("[green]✓[/green] Published splits metadata retrieved")
-    console.print(f"  Version: {pub_repro.get('cardiomas_version', '?')}")
-    console.print(f"  Strategy: {pub_repro.get('split_strategy', '?')}")
-    console.print(f"  Seed: {pub_seed}")
+    console.print(f"  Version:   {pub_repro.get('cardiomas_version', '?')}")
+    console.print(f"  Strategy:  {pub_repro.get('split_strategy', '?')}")
+    console.print(f"  Seed:      {pub_seed}")
     console.print(f"  Timestamp: {pub_repro.get('timestamp', '?')}")
     console.print("\nTo fully verify, re-run `cardiomas analyze` with the same seed and compare split IDs.")
 

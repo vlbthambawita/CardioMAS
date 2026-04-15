@@ -14,6 +14,7 @@ class CardioMAS:
         seed: int = 42,
         use_cloud_llm: bool = False,
         data_dir: str = "",
+        agent_llms: dict[str, str] | None = None,
     ) -> None:
         import cardiomas.config as cfg
         import os
@@ -26,8 +27,17 @@ class CardioMAS:
             cfg.DATA_DIR = Path(data_dir).expanduser()
             cfg.DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Apply per-agent LLM map to config
+        if agent_llms:
+            for agent, model in agent_llms.items():
+                if agent != "default":
+                    cfg.set_agent_llm(agent, model)
+            if "default" in agent_llms:
+                cfg.OLLAMA_MODEL = agent_llms["default"]
+
         self.seed = seed
         self.use_cloud_llm = use_cloud_llm
+        self._agent_llms: dict[str, str] = agent_llms or {}
 
     def analyze(
         self,
@@ -40,10 +50,31 @@ class CardioMAS:
         stratify_by: str | None = None,
         push_to_hf: bool = False,
         local_path: str | None = None,
+        requirement: str | None = None,
+        agent_llms: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Run full pipeline on a dataset source. Saves outputs locally.
-        Set push_to_hf=True to also publish to HuggingFace (requires HF_TOKEN)."""
+
+        Args:
+            source: URL or local path to the ECG dataset.
+            output_dir: Directory for local output files.
+            force: Re-run even if already analyzed.
+            use_cloud_llm: Use cloud LLM instead of local Ollama.
+            custom_split: e.g. {"train": 0.7, "val": 0.15, "test": 0.15}
+            ignore_official: Ignore official splits from the paper.
+            stratify_by: Metadata field to stratify by.
+            push_to_hf: Also publish to HuggingFace (requires HF_TOKEN).
+            local_path: Explicit local data directory (skips download).
+            requirement: Natural language requirement string (V2).
+            agent_llms: Per-agent model overrides, e.g. {"coder": "deepseek-coder:6.7b"}.
+
+        Returns:
+            dict with pipeline state fields (splits, local_output_dir, errors, …).
+        """
         from cardiomas.graph.workflow import run_pipeline
+
+        # Merge instance-level and call-level agent_llm maps
+        merged_llms = {**self._agent_llms, **(agent_llms or {})}
 
         options = UserOptions(
             dataset_source=source,
@@ -56,6 +87,8 @@ class CardioMAS:
             ignore_official=ignore_official,
             stratify_by=stratify_by,
             push_to_hf=push_to_hf,
+            requirement=requirement,
+            agent_llm_map=merged_llms,
         )
         state = run_pipeline(source, options)
         return state.model_dump(mode="json")
@@ -68,7 +101,7 @@ class CardioMAS:
         return check_hf_repo.invoke({"repo_id": cfg.HF_REPO_ID, "dataset_name": dataset_name})
 
     def get_splits(self, dataset_name: str) -> dict[str, list[str]]:
-        """Retrieve splits for a dataset from HuggingFace. Returns {split_name: [ids]}."""
+        """Retrieve splits for a dataset from HuggingFace."""
         result = self.status(dataset_name)
         if not result.get("exists"):
             raise ValueError(f"No splits found for '{dataset_name}' on HuggingFace vlbthambawita/ECGBench")

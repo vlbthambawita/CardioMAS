@@ -5,7 +5,8 @@ Usage in agents/tools:
     from cardiomas.verbose import vprint, vprint_llm
 
 vprint() writes a line only when verbose mode is on.
-vprint_llm() prints the LLM prompt and response in a styled panel.
+vprint_llm() prints the LLM prompt and response in a styled panel,
+             including the model name and backend.
 """
 from __future__ import annotations
 
@@ -17,14 +18,16 @@ from rich.text import Text
 _console = Console(stderr=False)
 _enabled: bool = False
 
-AGENT_COLORS = {
-    "orchestrator": "cyan",
-    "discovery":    "blue",
-    "paper":        "magenta",
-    "analysis":     "yellow",
-    "splitter":     "green",
-    "security":     "red",
-    "publisher":    "bright_green",
+AGENT_COLORS: dict[str, str] = {
+    "orchestrator":   "cyan",
+    "nl_requirement": "bright_magenta",
+    "discovery":      "blue",
+    "paper":          "magenta",
+    "analysis":       "yellow",
+    "splitter":       "green",
+    "security":       "red",
+    "coder":          "bright_cyan",
+    "publisher":      "bright_green",
 }
 
 
@@ -44,11 +47,13 @@ def vprint(agent: str, message: str) -> None:
     _console.print(f"  [{color}][{agent}][/{color}] {message}")
 
 
-def vprint_llm(agent: str, prompt: str, response: str) -> None:
+def vprint_llm(agent: str, prompt: str, response: str, model_name: str = "") -> None:
+    """Print an LLM call with prompt, response, and optional model name tag."""
     if not _enabled:
         return
     color = AGENT_COLORS.get(agent, "white")
-    _console.print(Rule(f"[{color}]{agent} — LLM call[/{color}]"))
+    model_tag = f" [{model_name} @ ollama]" if model_name else ""
+    _console.print(Rule(f"[{color}]{agent} — LLM call{model_tag}[/{color}]"))
     _console.print(Panel(
         Text(prompt[:800] + ("…" if len(prompt) > 800 else ""), style="dim"),
         title="[dim]prompt[/dim]",

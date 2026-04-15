@@ -21,7 +21,9 @@ class UserOptions(BaseModel):
     ignore_official: bool = False
     stratify_by: str | None = None
     verbose: bool = False
-    push_to_hf: bool = False  # explicit opt-in; requires HF_TOKEN
+    push_to_hf: bool = False          # explicit opt-in; requires HF_TOKEN
+    requirement: str | None = None    # natural language requirement input (V2)
+    agent_llm_map: dict[str, str] = Field(default_factory=dict)  # per-agent LLM overrides (V2)
 
 
 class LogEntry(BaseModel):
@@ -45,3 +47,23 @@ class GraphState(BaseModel):
     user_options: UserOptions = Field(default_factory=UserOptions.model_construct)
     execution_log: list[LogEntry] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+    # ── V2 orchestrator fields ─────────────────────────────────────────────
+    session_id: str = ""
+    next_agent: str = ""
+    last_completed_agent: str = ""
+    agent_skip_reasons: dict[str, str] = Field(default_factory=dict)
+    retry_counts: dict[str, int] = Field(default_factory=dict)
+    orchestrator_reasoning: list[str] = Field(default_factory=list)
+
+    # ── V2 NL requirement ─────────────────────────────────────────────────
+    parsed_requirement: Any | None = None   # ParsedRequirement | None
+
+    # ── V2 coder agent ────────────────────────────────────────────────────
+    generated_scripts: dict[str, str] = Field(default_factory=dict)   # {name: path}
+    script_execution_log: list[dict] = Field(default_factory=list)
+    script_verified: bool = False
+
+    # ── V2 checkpoint / resume ────────────────────────────────────────────
+    checkpoint_path: str = ""
+    last_completed_agent_at: str = ""  # ISO timestamp of last agent completion

@@ -20,6 +20,33 @@ def _env_path(key: str, default: str) -> Path:
 OLLAMA_BASE_URL: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL: str = _env("OLLAMA_MODEL", "llama3.1:8b")
 
+# ── Per-agent LLM overrides ────────────────────────────────────────────────
+# Format: AGENT_LLM_<AGENT>=model  e.g. AGENT_LLM_CODER=deepseek-coder:6.7b
+# Falls back to OLLAMA_MODEL when not set.
+_AGENT_LLM_OVERRIDES: dict[str, str] = {}
+for _agent in (
+    "orchestrator", "nl_requirement", "discovery", "paper",
+    "analysis", "splitter", "security", "coder", "publisher",
+):
+    _val = _env(f"AGENT_LLM_{_agent.upper()}", "")
+    if _val:
+        _AGENT_LLM_OVERRIDES[_agent] = _val
+
+
+def get_agent_llm(agent_name: str) -> str:
+    """Return the Ollama model name for a given agent (falls back to OLLAMA_MODEL)."""
+    return _AGENT_LLM_OVERRIDES.get(agent_name, OLLAMA_MODEL)
+
+
+def set_agent_llm(agent_name: str, model: str) -> None:
+    """Override the model for a specific agent at runtime."""
+    _AGENT_LLM_OVERRIDES[agent_name] = model
+
+
+# ── Context compression ────────────────────────────────────────────────────
+CONTEXT_COMPRESS_THRESHOLD: int = int(_env("CONTEXT_COMPRESS_THRESHOLD", "6000"))
+CONTEXT_COMPRESS_MODEL: str = _env("CONTEXT_COMPRESS_MODEL", "gemma3:4b")
+
 # ── Cloud LLM (optional) ───────────────────────────────────────────────────
 CLOUD_LLM_PROVIDER: str = _env("CLOUD_LLM_PROVIDER", "none")  # none | openai | anthropic
 CLOUD_LLM_MODEL: str = _env("CLOUD_LLM_MODEL", "")
