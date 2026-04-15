@@ -1,4 +1,0 @@
-langgraph
-langchain-ollama
-requests
-beautifulsoup4

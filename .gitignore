@@ -1,7 +1,45 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+
+# Environments
 .env
 .venv/
+venv/
+env/
+
+# Data
+data/
+*.hea
+*.dat
+*.h5
+*.hdf5
+*.edf
+
+# Models / caches
+.cache/
+~/.cardiomas/
+*.onnx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Output
 output/
-.claude/
+
+# Distribution
+*.tar.gz
