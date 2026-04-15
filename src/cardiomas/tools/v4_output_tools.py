@@ -34,7 +34,7 @@ def setup_v4_output_dir(dataset_name: str, base_dir: str = "output") -> dict[str
     Returns: dict with all directory paths keyed by role.
     """
     try:
-        root = Path(base_dir) / dataset_name / "v4"
+        root = Path(base_dir).resolve() / dataset_name / "v4"
         dirs = {
             "root": root,
             "scripts_subset": root / "scripts" / "subset",
