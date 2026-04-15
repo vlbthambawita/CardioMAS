@@ -66,6 +66,9 @@ where = ["src"]
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
 local_scheme = "no-local-version"
+# Only match vX.Y.Z release tags — ignore pre-release tags like v0.3.0.dev1
+# which cannot be bumped by the guess-next-dev scheme.
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
 
 [tool.ruff]
 line-length = 100
