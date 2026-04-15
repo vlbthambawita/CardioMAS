@@ -50,6 +50,21 @@ class DiscoveryOutput(BaseModel):
         default="", description="Anything uncertain or worth flagging"
     )
 
+    @field_validator("num_records", "sampling_rate_hz", "num_leads", mode="before")
+    @classmethod
+    def coerce_optional_int(cls, v: object) -> Optional[int]:
+        """Convert LLM strings like 'not found', 'unknown', 'N/A' to None."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+        try:
+            return int(str(v).strip())
+        except (ValueError, TypeError):
+            return None
+
     @field_validator("source_type")
     @classmethod
     def normalise_source_type(cls, v: str) -> str:
