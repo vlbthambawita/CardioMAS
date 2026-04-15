@@ -8,6 +8,7 @@ from cardiomas.agents.base import AgentOutputError, run_structured_agent
 from cardiomas.schemas.agent_outputs import AnalysisOutput
 from cardiomas.schemas.state import GraphState, LogEntry
 from cardiomas.tools.data_tools import compute_statistics, list_dataset_files, read_csv_metadata
+from cardiomas.tools.shell_tools import find_dataset_files
 from cardiomas.verbose import vprint
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,13 @@ def analysis_agent(state: GraphState) -> GraphState:
     state.execution_log.append(LogEntry(agent="analysis", action="start"))
     vprint("analysis", "scanning dataset files…")
 
-    local_path = opts.local_path or (str(info.local_path) if info and info.local_path else "")
-    if not local_path:
+    # Resolve local_path: explicit option > DatasetInfo.local_path > dataset_source (if local)
+    local_path = (
+        opts.local_path
+        or (str(info.local_path) if info and info.local_path else "")
+        or (opts.dataset_source if not opts.dataset_source.startswith("http") else "")
+    )
+    if not local_path or not Path(local_path).exists():
         vprint("analysis", "no local path — skipping file scan")
         state.analysis_report = {
             "status": "skipped",
@@ -31,11 +37,16 @@ def analysis_agent(state: GraphState) -> GraphState:
         }
         return state
 
+    # ── Discover actual data root (handles deeply nested layouts like physionet/) ─
+    effective_path = _find_data_root(local_path)
+    if effective_path != local_path:
+        vprint("analysis", f"data root resolved: {local_path} → {effective_path}")
+
     # ── Phase 2 hook: use DatasetMapper if available ──────────────────────
-    dataset_map = _build_dataset_map(local_path, state)
+    dataset_map = _build_dataset_map(effective_path, state)
 
     # ── Fallback: raw file listing + CSV sampling ─────────────────────────
-    files_result = list_dataset_files.invoke({"path": local_path, "max_depth": 3})
+    files_result = list_dataset_files.invoke({"path": effective_path, "max_depth": 5})
     files = files_result.get("files", [])
     vprint("analysis", f"found {len(files)} files")
 
@@ -44,7 +55,7 @@ def analysis_agent(state: GraphState) -> GraphState:
     stats: dict[str, Any] = {}
 
     for csv_file in csv_files[:3]:
-        full_path = str(Path(local_path) / csv_file["path"])
+        full_path = str(Path(effective_path) / csv_file["path"])
         result = read_csv_metadata.invoke({"path": full_path, "nrows": 5})
         if "error" not in result:
             metadata_sample[csv_file["path"]] = result
@@ -58,7 +69,7 @@ def analysis_agent(state: GraphState) -> GraphState:
     # ── Build context for LLM ─────────────────────────────────────────────
     context_parts = [
         f"Dataset: {info.name if info else 'unknown'}",
-        f"Local path: {local_path}",
+        f"Local path: {effective_path}",
         f"Total files: {len(files)}",
         f"File types: {list({f['suffix'] for f in files})}",
     ]
@@ -123,7 +134,7 @@ def analysis_agent(state: GraphState) -> GraphState:
     # ── Store in state ─────────────────────────────────────────────────────
     state.analysis_report = {
         "status": "complete",
-        "local_path": local_path,
+        "local_path": effective_path,
         "num_files": len(files),
         "metadata_files": list(metadata_sample.keys()),
         "statistics": stats,
@@ -157,6 +168,42 @@ def analysis_agent(state: GraphState) -> GraphState:
         f" strategy={output.recommended_strategy}",
     )
     return state
+
+
+def _find_data_root(local_path: str) -> str:
+    """
+    Given a top-level dataset directory, locate the deepest directory that
+    contains ECG data files (CSV, WFDB, HDF5, EDF).
+
+    For datasets like PTB-XL with nested physionet/files/ptb-xl/1_0_1/ layouts,
+    this returns the inner directory so the DatasetMapper scans the right place.
+    Uses the find_dataset_files bash tool for recursive discovery.
+    """
+    result = find_dataset_files.invoke({
+        "root_path": local_path,
+        "extensions": [".csv", ".tsv", ".hea", ".h5", ".hdf5", ".edf"],
+        "max_depth": 8,
+        "max_results": 20,
+    })
+    files = result.get("files", [])
+    if not files:
+        return local_path
+
+    # Find the shallowest CSV/TSV (metadata file) and use its parent directory
+    for f in files:
+        if f["suffix"] in (".csv", ".tsv"):
+            parent = str(Path(f["path"]).parent)
+            candidate = str(Path(local_path) / parent)
+            if Path(candidate).is_dir():
+                return candidate
+
+    # No CSV found — use the directory containing the shallowest data file
+    parent = str(Path(files[0]["path"]).parent)
+    candidate = str(Path(local_path) / parent)
+    if Path(candidate).is_dir():
+        return candidate
+
+    return local_path
 
 
 def _build_dataset_map(local_path: str, state: GraphState) -> dict | None:

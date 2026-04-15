@@ -155,17 +155,34 @@ def _load_record_ids(state: GraphState, analysis: dict) -> list[str]:
     # 2. CSV fallback (pre-Phase 2 behaviour)
     opts = state.user_options
     info = state.dataset_info
-    local_path = opts.local_path or (
-        str(info.local_path) if info and info.local_path else ""
+    # Use analysis report's resolved local_path first (handles nested layouts)
+    local_path = (
+        analysis.get("local_path")
+        or opts.local_path
+        or (str(info.local_path) if info and info.local_path else "")
+        or (opts.dataset_source if not opts.dataset_source.startswith("http") else "")
     )
     if local_path and Path(local_path).exists():
         try:
             import pandas as pd
             from cardiomas.tools.data_tools import list_dataset_files
+            from cardiomas.tools.shell_tools import find_dataset_files
 
-            files = list_dataset_files.invoke(
-                {"path": local_path, "max_depth": 2}
-            ).get("files", [])
+            # Use deep recursive find to handle nested layouts (e.g. physionet/files/...)
+            deep_result = find_dataset_files.invoke({
+                "root_path": local_path,
+                "extensions": [".csv", ".tsv"],
+                "max_depth": 8,
+                "max_results": 10,
+            })
+            files = [
+                {"path": f["relative"], "suffix": f["suffix"]}
+                for f in deep_result.get("files", [])
+            ]
+            if not files:
+                files = list_dataset_files.invoke(
+                    {"path": local_path, "max_depth": 6}
+                ).get("files", [])
             csv_files = [
                 Path(local_path) / f["path"]
                 for f in files if f["suffix"] in (".csv", ".tsv")
