@@ -8,6 +8,7 @@ from cardiomas.schemas.dataset import DatasetInfo, DatasetSource
 from cardiomas.schemas.state import GraphState, LogEntry
 from cardiomas.tools.data_tools import list_dataset_files
 from cardiomas.tools.research_tools import fetch_webpage
+from cardiomas.verbose import vprint
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ def discovery_agent(state: GraphState) -> GraphState:
     opts = state.user_options
     source = state.dataset_source
     state.execution_log.append(LogEntry(agent="discovery", action="start", detail=source))
+    vprint("discovery", f"starting — source: {source}")
 
     # Try registry first
     from cardiomas.datasets.registry import get_registry
@@ -28,12 +30,15 @@ def discovery_agent(state: GraphState) -> GraphState:
         if info and info.source_url and source in (info.source_url, info.name, name):
             state.dataset_info = info
             state.execution_log.append(LogEntry(agent="discovery", action="registry_hit", detail=name))
+            vprint("discovery", f"registry hit → {name}")
             return state
 
     # Fetch webpage for metadata
     page_data: dict[str, Any] = {}
     if source.startswith("http"):
+        vprint("discovery", f"fetching webpage: {source}")
         page_data = fetch_webpage.invoke({"url": source})
+        vprint("discovery", f"page title: {page_data.get('title', '(none)')}")
 
     # Ask LLM to structure the discovery
     llm = get_llm(prefer_cloud=opts.use_cloud_llm)
@@ -67,6 +72,7 @@ def discovery_agent(state: GraphState) -> GraphState:
     )
     state.dataset_info = info
     state.execution_log.append(LogEntry(agent="discovery", action="complete", detail=f"identified as {name}"))
+    vprint("discovery", f"complete — identified as '{name}' ({source_type.value})")
     return state
 
 

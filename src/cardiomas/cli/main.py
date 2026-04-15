@@ -63,8 +63,15 @@ def analyze(
         dry_run=dry_run,
     )
 
-    with console.status("[bold green]Running CardioMAS pipeline...", spinner="dots"):
+    from cardiomas.verbose import enable as verbose_enable
+    verbose_enable(verbose)
+
+    if verbose:
+        console.print("[dim]Verbose mode on — streaming agent output below.[/dim]\n")
         state = run_pipeline(dataset_source, options)
+    else:
+        with console.status("[bold green]Running CardioMAS pipeline...", spinner="dots"):
+            state = run_pipeline(dataset_source, options)
 
     if output_json:
         rprint(json.dumps(state.model_dump(mode="json"), indent=2, default=str))
@@ -98,7 +105,8 @@ def analyze(
         console.print("[blue]Dataset already published on HF. Use --force-reanalysis to overwrite.[/blue]")
 
     if verbose:
-        console.print("\n[dim]Execution log:[/dim]")
+        from rich.rule import Rule
+        console.print(Rule("[dim]execution log[/dim]"))
         for entry in state.execution_log:
             console.print(f"  [dim]{entry.timestamp.strftime('%H:%M:%S')} [{entry.agent}] {entry.action}: {entry.detail}[/dim]")
 

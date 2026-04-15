@@ -7,6 +7,7 @@ from typing import Any
 from cardiomas.agents.base import run_agent
 from cardiomas.schemas.state import GraphState, LogEntry
 from cardiomas.tools.data_tools import list_dataset_files, read_csv_metadata, compute_statistics
+from cardiomas.verbose import vprint
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,12 @@ def analysis_agent(state: GraphState) -> GraphState:
     opts = state.user_options
     info = state.dataset_info
     state.execution_log.append(LogEntry(agent="analysis", action="start"))
+    vprint("analysis", "scanning dataset files…")
 
     # Determine local path
     local_path = opts.local_path or (str(info.local_path) if info and info.local_path else "")
     if not local_path:
+        vprint("analysis", "no local path — skipping file scan")
         state.analysis_report = {
             "status": "skipped",
             "reason": "No local path — dataset not downloaded yet. Use --local-path to provide it.",
@@ -29,8 +32,10 @@ def analysis_agent(state: GraphState) -> GraphState:
         return state
 
     # List files
+    vprint("analysis", f"listing files in: {local_path}")
     files_result = list_dataset_files.invoke({"path": local_path, "max_depth": 3})
     files = files_result.get("files", [])
+    vprint("analysis", f"found {len(files)} files")
 
     # Find CSV metadata files
     csv_files = [f for f in files if f["suffix"] in (".csv", ".tsv")]
@@ -83,4 +88,5 @@ def analysis_agent(state: GraphState) -> GraphState:
         "id_field": info.ecg_id_field if info else "record_id",
     }
     state.execution_log.append(LogEntry(agent="analysis", action="complete", detail=f"{len(files)} files"))
+    vprint("analysis", f"complete — {len(files)} files, {len(metadata_sample)} metadata CSV(s)")
     return state

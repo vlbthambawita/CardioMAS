@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from cardiomas.schemas.state import GraphState, LogEntry
+from cardiomas.verbose import vprint
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +14,12 @@ def orchestrator_agent(state: GraphState) -> GraphState:
     from cardiomas.tools.publishing_tools import check_hf_repo
 
     state.execution_log.append(LogEntry(agent="orchestrator", action="start", detail=state.dataset_source))
+    vprint("orchestrator", f"pipeline start — source: {state.dataset_source}")
 
     if not state.user_options.force_reanalysis:
-        # Try to infer dataset name for registry lookup
         source = state.dataset_source
         dataset_name = source.rstrip("/").split("/")[-1].lower()
+        vprint("orchestrator", f"checking HF cache for '{dataset_name}'…")
 
         result = check_hf_repo.invoke({"repo_id": cfg.HF_REPO_ID, "dataset_name": dataset_name})
         if result.get("exists"):
@@ -26,5 +28,10 @@ def orchestrator_agent(state: GraphState) -> GraphState:
             state.execution_log.append(
                 LogEntry(agent="orchestrator", action="cache_hit", detail=dataset_name)
             )
+            vprint("orchestrator", f"cache hit — {dataset_name} already on HF, skipping pipeline")
+        else:
+            vprint("orchestrator", "no cache hit — running full pipeline")
+    else:
+        vprint("orchestrator", "--force-reanalysis set — skipping cache check")
 
     return state
