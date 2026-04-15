@@ -83,121 +83,49 @@ def coder_agent(state: GraphState) -> GraphState:
     if state.analysis_report:
         context += f"Analysis notes: {str(state.analysis_report)[:200]}\n"
 
-    # ── generate_splits.py ────────────────────────────────────────────────
-    gen_msg = f"""Write a self-contained Python script that reproduces the exact splits for the `{dataset_name}` ECG dataset.
-
-Script file: generate_splits.py
-
-Requirements:
-1. ONLY stdlib + pandas + numpy. NO cardiomas or other external imports beyond these.
-2. ALL parameters as ALL_CAPS constants at the top:
-   DATA_PATH = "{local_path}"
-   ID_FIELD = "{id_field}"
-   SEED = {seed}
-   STRATEGY = "{strategy}"
-   SPLIT_RATIOS = {split_ratios}
-3. Header comment with: dataset={dataset_name}, cardiomas={__version__}, date={today}, seed={seed}, strategy={strategy}, requirement="{requirement or 'none'}"
-4. Load record IDs by scanning DATA_PATH for CSV/TSV files and extracting the ID_FIELD column. If not found, list all files and use filenames as IDs.
-5. Sort IDs. Compute SHA-256(sorted_ids_string + str(SEED) + STRATEGY) as hex. Convert first 8 hex chars to int for numpy seed.
-6. np.random.default_rng(numpy_seed).shuffle(sorted_ids). Then slice by SPLIT_RATIOS.
-7. Save output as splits.json in the SAME DIRECTORY as the script.
-8. Print a SHA-256 of the output dict (sorted keys, sorted IDs) to stdout as: SPLITS_SHA256=<hash>
-9. Print a summary table showing split name, count, and ratio.
-
-Return ONLY valid Python code. No markdown fences, no explanation."""
-
-    gen_response = run_agent(llm, "coder", gen_msg, extra_context=context)
-    gen_code = _extract_code(gen_response)
-
-    gen_path = scripts_dir / "generate_splits.py"
-    gen_path.write_text(gen_code)
-    state.generated_scripts["generate_splits.py"] = str(gen_path)
-    vprint("coder", f"wrote generate_splits.py ({len(gen_code)} chars)")
+    # ── V4: reference splits.json path (executor-generated) ──────────────
+    v4_splits_path = ""
+    if state.v4_output_dir:
+        from pathlib import Path as _Path
+        v4_full = _Path(state.v4_output_dir) / "outputs" / "full" / "splits.json"
+        if v4_full.exists():
+            v4_splits_path = str(v4_full)
+    if v4_splits_path:
+        context += f"\nReference splits.json (V4 executor-generated): {v4_splits_path}\n"
 
     # ── verify_splits.py (templated, no LLM needed) ───────────────────────
-    verify_code = _build_verify_script(dataset_name)
+    verify_code = _build_verify_script(dataset_name, v4_splits_path)
     verify_path = scripts_dir / "verify_splits.py"
     verify_path.write_text(verify_code)
     state.generated_scripts["verify_splits.py"] = str(verify_path)
-    vprint("coder", f"wrote verify_splits.py")
+    vprint("coder", "wrote verify_splits.py")
 
-    # ── explore_dataset.py ────────────────────────────────────────────────
-    eda_msg = f"""Write a self-contained Python EDA script for the `{dataset_name}` ECG dataset.
-
-Script file: explore_dataset.py
-
-Requirements:
-1. ONLY stdlib + pandas (+ matplotlib optional). NO cardiomas imports.
-2. DATA_PATH = "{local_path}" as constant at top.
-3. Print: total record count, unique patient count (if patient_id/ecg_id column exists), missing value summary per column, label distribution (top 10 values for any column named 'label', 'rhythm', 'scp_codes', 'diagnosis', 'class').
-4. Try to save a bar chart as label_distribution.png using matplotlib if available; silently skip if not.
-5. All output to stdout. Catch all file errors gracefully.
-
-Return ONLY valid Python code. No markdown fences, no explanation."""
-
-    eda_response = run_agent(llm, "coder", eda_msg, extra_context=context)
-    eda_code = _extract_code(eda_response)
-    eda_path = scripts_dir / "explore_dataset.py"
-    eda_path.write_text(eda_code)
-    state.generated_scripts["explore_dataset.py"] = str(eda_path)
-    vprint("coder", f"wrote explore_dataset.py")
-
-    # ── Execute generate_splits.py ────────────────────────────────────────
-    vprint("coder", "executing generate_splits.py to verify…")
-    exec_result = execute_script.invoke({
-        "script_path": str(gen_path),
-        "timeout": 120,
-        "working_dir": str(scripts_dir),
-    })
-    state.script_execution_log.append(exec_result)
-
-    # ── Phase 4: strict SHA-256 verification ─────────────────────────────
-    ref_checksum = repro.dataset_checksum if repro else ""
-    try:
-        from cardiomas.agents.verification import ScriptVerificationError, verify_script_sha256
-        verify_script_sha256(exec_result, ref_checksum)
-        state.script_verified = True
-        vprint("coder", "[green]generate_splits.py verified — SHA-256 matches manifest[/green]")
-    except ScriptVerificationError as exc:
-        vprint("coder", f"[yellow]verification failed (attempt 1): {exc}[/yellow]")
-        logger.warning(f"coder: script verification failed — requesting LLM correction")
-        # Send correction prompt and regenerate
-        correction_ctx = (
-            f"The generated generate_splits.py failed verification:\n{exc}\n\n"
-            f"Original context:\n{context}"
-        )
-        corrected_response = run_agent(llm, "coder", gen_msg, extra_context=correction_ctx)
-        corrected_code = _extract_code(corrected_response)
-        gen_path.write_text(corrected_code)
-        state.generated_scripts["generate_splits.py"] = str(gen_path)
-
-        # Re-execute corrected script
-        exec_result2 = execute_script.invoke({
-            "script_path": str(gen_path),
+    # ── Execute verify_splits.py ──────────────────────────────────────────
+    # Only execute if there's a reference splits.json to compare against
+    ref_splits_file = (
+        v4_splits_path
+        or str(out_dir / "splits.json")
+    )
+    if Path(ref_splits_file).exists():
+        vprint("coder", "executing verify_splits.py…")
+        exec_result = execute_script.invoke({
+            "script_path": str(verify_path),
             "timeout": 120,
             "working_dir": str(scripts_dir),
         })
-        state.script_execution_log.append(exec_result2)
+        state.script_execution_log.append(exec_result)
 
-        try:
-            verify_script_sha256(exec_result2, ref_checksum)
-            state.script_verified = True
-            vprint("coder", "[green]corrected script verified — SHA-256 matches[/green]")
-        except ScriptVerificationError as exc2:
-            state.script_verified = False
-            state.errors.append(f"coder: script SHA-256 mismatch after retry: {exc2}")
-            vprint("coder", f"[red]script verification failed after retry: {exc2}[/red]")
-            logger.error(f"coder: script verification failed after retry: {exc2}")
-    except ImportError:
-        # Phase 4 not installed — fall back to basic check
         if exec_result.get("exit_code") == 0:
             state.script_verified = True
-            vprint("coder", "[green]generate_splits.py ran successfully[/green]")
+            vprint("coder", "[green]verify_splits.py ran successfully[/green]")
         else:
             stderr = exec_result.get("stderr", "")[:300]
-            vprint("coder", f"[yellow]script exited {exec_result.get('exit_code')} — saved but unverified[/yellow]")
+            vprint("coder", f"[yellow]verify_splits.py exited {exec_result.get('exit_code')} — saved but unverified[/yellow]")
             vprint("coder", f"[dim]stderr: {stderr}[/dim]")
-            logger.warning(f"generate_splits.py execution failed: {stderr}")
+            logger.warning(f"verify_splits.py execution result: {stderr}")
+    else:
+        vprint("coder", "[dim]no reference splits.json yet — skipping verify execution[/dim]")
+        state.script_verified = False
 
     state.execution_log.append(LogEntry(
         agent="coder", action="complete",
@@ -225,7 +153,7 @@ def _extract_code(response: str) -> str:
     return response.strip()
 
 
-def _build_verify_script(dataset_name: str) -> str:
+def _build_verify_script(dataset_name: str, v4_splits_path: str = "") -> str:
     return f'''#!/usr/bin/env python3
 """
 verify_splits.py — Verify reproducibility of {dataset_name} splits.

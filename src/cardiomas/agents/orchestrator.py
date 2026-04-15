@@ -128,14 +128,68 @@ def _route(state: GraphState, last: str) -> tuple[str, str]:
         # Local path with no URL → skip paper (no paper to find for local datasets)
         has_local = bool(opts.local_path) and not _is_url(opts.dataset_source)
         if has_local:
+            # V4 mode: go to data_engineer instead of analysis
+            if _has_local_path(state):
+                return "data_engineer", "Local-only path — generating exploration scripts (V4)."
             return "analysis", "Local-only path — skipping paper agent, going to analysis."
         return "paper", "Dataset identified — searching for associated publication."
 
     if last == "paper":
-        return "analysis", "Paper analysis complete — proceeding to data analysis."
+        # V4 mode: go to data_engineer instead of analysis
+        return "data_engineer", "Paper analysis done — generating dataset exploration scripts (V4)."
+
+    if last == "data_engineer":
+        return "executor", "Scripts generated — executing on subset for validation (V4)."
+
+    if last == "executor":
+        # Phase-based routing from executor
+        phase = state.v4_pipeline_phase
+        refinement = state.v4_refinement_context
+
+        if refinement and state.errors:
+            # Script failed — check if we should refine
+            failed_script = refinement.failed_script
+            retry_key = f"executor_refinement_{failed_script}"
+            count = state.retry_counts.get(retry_key, 0)
+            max_refinements = getattr(opts, "v4_max_refinements", 2)
+            if count < max_refinements:
+                state.retry_counts[retry_key] = count + 1
+                # Clear the error to allow data_engineer to retry
+                state.errors = [e for e in state.errors if "executor:" not in e]
+                return "data_engineer", (
+                    f"Script '{failed_script}' failed (attempt {count + 1}/{max_refinements}) "
+                    "— sending back to data_engineer for refinement."
+                )
+            return "end_with_error", (
+                f"Script '{failed_script}' failed after {max_refinements} refinement attempts."
+            )
+
+        if phase == "subset_validation" and state.v4_subset_validated:
+            return "analysis", "Subset validation passed — proceeding to analysis (V4)."
+
+        if phase == "full_run":
+            return "analysis", "Full run complete — proceeding to analysis (V4)."
+
+        if phase == "ecg_stats_run":
+            return "splitter", "ECG stats complete — generating reproducible splits (V4)."
+
+        return "end_with_error", f"Unexpected executor state: phase={phase}"
 
     if last == "analysis":
+        # V4: after analysis, check phase
+        phase = state.v4_pipeline_phase
+        if phase == "subset_validation" and state.v4_subset_validated:
+            return "approval_gate", "Subset validated — requesting approval before full run (V4)."
+        if phase == "full_run":
+            skip_ecg = getattr(opts, "v4_skip_ecg_stats", False)
+            if skip_ecg:
+                return "splitter", "Full run analysis complete — skipping ECG stats (V4)."
+            return "ecg_stats", "Full run analysis complete — generating ECG statistical scripts (V4)."
+        # V3 fallback (no V4 phases set)
         return "splitter", "Analysis complete — generating reproducible splits."
+
+    if last == "ecg_stats":
+        return "executor", "ECG stat scripts generated — executing full-dataset stats (V4)."
 
     if last == "splitter":
         return "security", "Splits generated — running security audit."
@@ -157,6 +211,16 @@ def _route(state: GraphState, last: str) -> tuple[str, str]:
         return "end_saved", "Published to HuggingFace — pipeline complete."
 
     return "end_saved", "Pipeline complete."
+
+
+def _has_local_path(state: GraphState) -> bool:
+    """Return True if a local dataset path is set."""
+    opts = state.user_options
+    return bool(
+        opts.local_path
+        or (state.dataset_info and state.dataset_info.local_path)
+        or (not _is_url(opts.dataset_source))
+    )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

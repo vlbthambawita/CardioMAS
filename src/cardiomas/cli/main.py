@@ -43,6 +43,11 @@ def analyze(
     llm_security: Annotated[Optional[str], typer.Option("--llm-security", help="Model for security agent")] = None,
     llm_coder: Annotated[Optional[str], typer.Option("--llm-coder", help="Model for coder agent")] = None,
     llm_publisher: Annotated[Optional[str], typer.Option("--llm-publisher", help="Model for publisher agent")] = None,
+    # V4 options
+    approve: Annotated[bool, typer.Option("--approve", help="Approve subset validation and proceed to full dataset run (V4)")] = False,
+    auto_approve: Annotated[bool, typer.Option("--auto-approve", help="Skip human approval gate and auto-approve subset validation (V4)")] = False,
+    v4_subset_size: Annotated[int, typer.Option("--v4-subset-size", help="Number of records for subset validation (V4, default 100)")] = 100,
+    skip_ecg_stats: Annotated[bool, typer.Option("--skip-ecg-stats", help="Skip ECG statistical analysis phase (V4)")] = False,
 ) -> None:
     """Analyze an ECG dataset and save splits locally. Use --push to publish to HuggingFace."""
     from cardiomas.schemas.state import UserOptions
@@ -80,6 +85,11 @@ def analyze(
             import cardiomas.config as _cfg
             _cfg.set_agent_llm(agent, model)
 
+    # V4 approval status
+    v4_approval_status = "pending"
+    if approve:
+        v4_approval_status = "approved"
+
     options = UserOptions(
         dataset_source=dataset_source,
         local_path=local_path,
@@ -94,6 +104,10 @@ def analyze(
         push_to_hf=push,
         requirement=requirement,
         agent_llm_map=agent_llm_map,
+        # V4 options
+        v4_auto_approve=auto_approve,
+        v4_subset_size=v4_subset_size,
+        v4_skip_ecg_stats=skip_ecg_stats,
     )
 
     from cardiomas.verbose import enable as verbose_enable
@@ -104,11 +118,15 @@ def analyze(
             console.print(f"[dim]Requirement:[/dim] {requirement}\n")
         if agent_llm_map:
             console.print(f"[dim]Per-agent LLMs:[/dim] {agent_llm_map}\n")
+        if approve:
+            console.print("[dim]V4: approval_status=approved[/dim]\n")
+        if auto_approve:
+            console.print("[dim]V4: auto-approve enabled[/dim]\n")
         console.print("[dim]Verbose mode on — streaming agent output below.[/dim]\n")
-        state = run_pipeline(dataset_source, options)
+        state = run_pipeline(dataset_source, options, v4_approval_status=v4_approval_status)
     else:
         with console.status("[bold green]Running CardioMAS pipeline...", spinner="dots"):
-            state = run_pipeline(dataset_source, options)
+            state = run_pipeline(dataset_source, options, v4_approval_status=v4_approval_status)
 
     if output_json:
         rprint(json.dumps(state.model_dump(mode="json"), indent=2, default=str))

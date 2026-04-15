@@ -23,18 +23,29 @@ from cardiomas.agents.splitter import splitter_agent
 from cardiomas.agents.security import security_agent
 from cardiomas.agents.coder import coder_agent
 from cardiomas.agents.publisher import publisher_agent
+# V4 agents
+from cardiomas.agents.data_engineer import data_engineer_agent
+from cardiomas.agents.executor import executor_agent
+from cardiomas.agents.ecg_stats import ecg_stats_agent
+from cardiomas.agents.approval_gate import approval_gate_node
 
 logger = logging.getLogger(__name__)
 
 # All non-terminal agents that loop back to orchestrator
 _WORKER_AGENTS = [
     "nl_requirement", "discovery", "paper",
+    "data_engineer", "executor", "ecg_stats",  # V4 additions
     "analysis", "splitter", "security",
     "coder", "publisher",
 ]
 
 # All valid routing targets from orchestrator
-_ALL_TARGETS = _WORKER_AGENTS + ["return_existing", "end_saved", "end_with_error"]
+_ALL_TARGETS = _WORKER_AGENTS + [
+    "return_existing",
+    "approval_gate",   # V4 human-in-the-loop
+    "end_saved",
+    "end_with_error",
+]
 
 
 # ── State serialisation ───────────────────────────────────────────────────
@@ -129,7 +140,7 @@ def _wrap_simple(fn):
 # ── Graph construction ────────────────────────────────────────────────────
 
 def build_workflow():
-    """Build and compile the V2 hub-and-spoke LangGraph StateGraph."""
+    """Build and compile the V4 hub-and-spoke LangGraph StateGraph."""
     graph = StateGraph(dict)
 
     def _route_from_orchestrator(state_dict: dict) -> str:
@@ -140,19 +151,35 @@ def build_workflow():
             return "end_saved"
         return target
 
+    def _route_from_approval_gate(state_dict: dict) -> str:
+        """Route from approval_gate based on next_agent set by the gate."""
+        state = _dict_to_state(state_dict)
+        target = state.next_agent
+        valid = {"executor", "end_saved", "orchestrator"}
+        if target not in valid:
+            logger.warning(f"approval_gate: unexpected next_agent '{target}' — defaulting to end_saved")
+            return "end_saved"
+        return target
+
     # ── Nodes ─────────────────────────────────────────────────────────────
-    graph.add_node("orchestrator", _wrap_simple(orchestrator_agent))
-    graph.add_node("nl_requirement", _make_worker_wrapper("nl_requirement", nl_requirement_agent))
-    graph.add_node("discovery",      _make_worker_wrapper("discovery",      discovery_agent))
-    graph.add_node("paper",          _make_worker_wrapper("paper",          paper_agent))
-    graph.add_node("analysis",       _make_worker_wrapper("analysis",       analysis_agent))
-    graph.add_node("splitter",       _make_worker_wrapper("splitter",       splitter_agent))
-    graph.add_node("security",       _make_worker_wrapper("security",       security_agent))
-    graph.add_node("coder",          _make_worker_wrapper("coder",          coder_agent))
-    graph.add_node("publisher",      _make_worker_wrapper("publisher",      publisher_agent))
-    graph.add_node("return_existing",_wrap_simple(_passthrough_return_existing))
-    graph.add_node("end_saved",      _wrap_simple(_passthrough_end_saved))
-    graph.add_node("end_with_error", _wrap_simple(_passthrough_end_error))
+    graph.add_node("orchestrator",    _wrap_simple(orchestrator_agent))
+    graph.add_node("nl_requirement",  _make_worker_wrapper("nl_requirement",  nl_requirement_agent))
+    graph.add_node("discovery",       _make_worker_wrapper("discovery",       discovery_agent))
+    graph.add_node("paper",           _make_worker_wrapper("paper",           paper_agent))
+    graph.add_node("analysis",        _make_worker_wrapper("analysis",        analysis_agent))
+    graph.add_node("splitter",        _make_worker_wrapper("splitter",        splitter_agent))
+    graph.add_node("security",        _make_worker_wrapper("security",        security_agent))
+    graph.add_node("coder",           _make_worker_wrapper("coder",           coder_agent))
+    graph.add_node("publisher",       _make_worker_wrapper("publisher",       publisher_agent))
+    # V4 nodes
+    graph.add_node("data_engineer",   _make_worker_wrapper("data_engineer",   data_engineer_agent))
+    graph.add_node("executor",        _make_worker_wrapper("executor",        executor_agent))
+    graph.add_node("ecg_stats",       _make_worker_wrapper("ecg_stats",       ecg_stats_agent))
+    graph.add_node("approval_gate",   _wrap_simple(approval_gate_node))
+    # Terminal nodes
+    graph.add_node("return_existing", _wrap_simple(_passthrough_return_existing))
+    graph.add_node("end_saved",       _wrap_simple(_passthrough_end_saved))
+    graph.add_node("end_with_error",  _wrap_simple(_passthrough_end_error))
 
     # ── Entry ─────────────────────────────────────────────────────────────
     graph.set_entry_point("orchestrator")
@@ -168,6 +195,17 @@ def build_workflow():
     for agent in _WORKER_AGENTS:
         graph.add_edge(agent, "orchestrator")
 
+    # ── Approval gate → executor (approved) or end_saved (rejected/pending) ─
+    graph.add_conditional_edges(
+        "approval_gate",
+        _route_from_approval_gate,
+        {
+            "executor": "executor",
+            "end_saved": "end_saved",
+            "orchestrator": "orchestrator",
+        },
+    )
+
     # ── Terminal nodes → END ─────────────────────────────────────────────
     graph.add_edge("return_existing", END)
     graph.add_edge("end_saved", END)
@@ -181,6 +219,7 @@ def build_workflow():
 def run_pipeline(
     dataset_source: str,
     options: UserOptions | None = None,
+    v4_approval_status: str = "pending",
 ) -> GraphState:
     """Run the full CardioMAS pipeline and return the final GraphState."""
     if options is None:
@@ -192,10 +231,15 @@ def run_pipeline(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = str(checkpoint_dir / "session_checkpoint.json")
 
+    # V4: subset size from options
+    subset_size = getattr(options, "v4_subset_size", 100)
+
     initial = GraphState(
         dataset_source=dataset_source,
         user_options=options,
         checkpoint_path=checkpoint_path,
+        v4_subset_size=subset_size,
+        v4_approval_status=v4_approval_status,
     )
     workflow = build_workflow()
     final_dict = workflow.invoke(_state_to_dict(initial))

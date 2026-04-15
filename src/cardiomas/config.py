@@ -26,6 +26,7 @@ OLLAMA_MODEL: str = _env("OLLAMA_MODEL", "gemma4:e2b")
 _AGENT_LLM_OVERRIDES: dict[str, str] = {}
 for _agent in (
     "orchestrator", "nl_requirement", "discovery", "paper",
+    "data_engineer", "ecg_stats",  # V4 additions (executor has no LLM)
     "analysis", "splitter", "security", "coder", "publisher",
 ):
     _val = _env(f"AGENT_LLM_{_agent.upper()}", "")

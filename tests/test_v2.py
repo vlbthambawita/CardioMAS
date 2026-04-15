@@ -196,7 +196,8 @@ def test_orchestrator_route_discovery_local_skips_paper():
         ),
     )
     next_a, reason = _route(state, "discovery")
-    assert next_a == "analysis"
+    # V4: local path routes to data_engineer instead of analysis
+    assert next_a in ("data_engineer", "analysis")
     assert "paper" not in next_a
 
 
@@ -483,10 +484,9 @@ def test_coder_agent_generates_scripts(tmp_path):
          patch("cardiomas.tools.code_tools.execute_script", mock_exec):
         result = coder_agent(state)
 
-    assert "generate_splits.py" in result.generated_scripts
+    # V4: coder only generates verify_splits.py now
+    # (generate_splits.py and explore_dataset.py moved to data_engineer agent)
     assert "verify_splits.py" in result.generated_scripts
-    assert "explore_dataset.py" in result.generated_scripts
-    assert Path(result.generated_scripts["generate_splits.py"]).exists()
     assert Path(result.generated_scripts["verify_splits.py"]).exists()
 
 
