@@ -9,6 +9,9 @@ from cardiomas.schemas.dataset import DatasetInfo
 from cardiomas.schemas.split import SplitManifest
 from cardiomas.schemas.audit import SecurityAudit
 
+# Forward-declared to avoid circular imports; resolved at runtime
+DatasetMapType = Any  # cardiomas.mappers.schemas.DatasetMap
+
 
 class UserOptions(BaseModel):
     dataset_source: str
@@ -67,3 +70,6 @@ class GraphState(BaseModel):
     # ── V2 checkpoint / resume ────────────────────────────────────────────
     checkpoint_path: str = ""
     last_completed_agent_at: str = ""  # ISO timestamp of last agent completion
+
+    # ── V3 dataset semantic map (Phase 2) ─────────────────────────────────
+    dataset_map: Any | None = None   # DatasetMap | None (avoid circular import)

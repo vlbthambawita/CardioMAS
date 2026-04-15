@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from cardiomas.agents.base import run_agent
+from cardiomas.agents.base import AgentOutputError, run_structured_agent
+from cardiomas.schemas.agent_outputs import DiscoveryOutput
 from cardiomas.schemas.dataset import DatasetInfo, DatasetSource
 from cardiomas.schemas.state import GraphState, LogEntry
-from cardiomas.tools.data_tools import list_dataset_files
 from cardiomas.tools.research_tools import fetch_webpage
 from cardiomas.verbose import vprint
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def discovery_agent(state: GraphState) -> GraphState:
     """Identify dataset type, metadata, source, and official split info."""
-    from cardiomas.llm_factory import get_llm
+    from cardiomas.llm_factory import get_llm_for_agent
 
     opts = state.user_options
     source = state.dataset_source
@@ -40,46 +40,65 @@ def discovery_agent(state: GraphState) -> GraphState:
         page_data = fetch_webpage.invoke({"url": source})
         vprint("discovery", f"page title: {page_data.get('title', '(none)')}")
 
-    # Ask LLM to structure the discovery
-    llm = get_llm(prefer_cloud=opts.use_cloud_llm)
-    context = f"URL/path: {source}\nPage title: {page_data.get('title', '')}\nPage text excerpt: {page_data.get('text', '')[:3000]}"
-    prompt = (
-        "Analyze this ECG dataset source. Extract:\n"
-        "1. Dataset name (short slug, e.g. ptb-xl)\n"
-        "2. Source type: physionet | huggingface | local | url | kaggle\n"
-        "3. Number of records if mentioned\n"
-        "4. Whether official train/val/test splits exist (yes/no and where)\n"
-        "5. ECG record identifier field name\n"
-        "6. Sampling rate and number of leads if mentioned\n"
-        "7. Associated paper URL if mentioned\n\n"
-        "Respond in structured format. Cite source for every claim."
+    # Build context for LLM
+    context = (
+        f"URL/path: {source}\n"
+        f"Page title: {page_data.get('title', '')}\n"
+        f"Page text excerpt:\n{page_data.get('text', '')[:3000]}"
     )
-    response = run_agent(llm, "discovery", prompt, context)
+    prompt = (
+        "Analyze this ECG dataset source and extract all available metadata.\n"
+        "Be precise: only report what is explicitly stated in the page text.\n"
+        "For 'source_type' use exactly one of: physionet, huggingface, local, url, kaggle.\n"
+        "For 'ecg_id_field' identify the column that uniquely identifies each ECG recording.\n"
+        "Set 'official_splits' to true only if the dataset explicitly provides predefined splits."
+    )
 
-    # Parse LLM response to build DatasetInfo
-    name = _extract_field(response, "Dataset name", source.split("/")[-1].lower()[:30])
-    source_type_str = _extract_field(response, "Source type", "url").lower().strip()
+    llm = get_llm_for_agent(
+        "discovery",
+        prefer_cloud=opts.use_cloud_llm,
+        agent_llm_map=opts.agent_llm_map,
+    )
+
     try:
-        source_type = DatasetSource(source_type_str)
+        output: DiscoveryOutput = run_structured_agent(
+            llm, "discovery", prompt, DiscoveryOutput, extra_context=context
+        )
+    except AgentOutputError as exc:
+        logger.error(f"discovery_agent: structured output failed — {exc}")
+        state.errors.append(f"discovery: {exc}")
+        # Build minimal DatasetInfo so pipeline can continue
+        output = DiscoveryOutput(
+            dataset_name=source.rstrip("/").split("/")[-1].lower()[:30] or "unknown",
+            source_type="url" if source.startswith("http") else "local",
+        )
+
+    try:
+        source_type = DatasetSource(output.source_type)
     except ValueError:
         source_type = DatasetSource.URL
 
     info = DatasetInfo(
-        name=name,
+        name=output.dataset_name,
         source_type=source_type,
         source_url=source if source.startswith("http") else None,
         description=page_data.get("title", ""),
+        paper_url=output.paper_url,
+        official_splits=output.official_splits,
+        num_records=output.num_records,
+        ecg_id_field=output.ecg_id_field,
+        sampling_rate=output.sampling_rate_hz,
+        num_leads=output.num_leads,
     )
     state.dataset_info = info
-    state.execution_log.append(LogEntry(agent="discovery", action="complete", detail=f"identified as {name}"))
-    vprint("discovery", f"complete — identified as '{name}' ({source_type.value})")
+
+    state.execution_log.append(
+        LogEntry(agent="discovery", action="complete", detail=f"identified as {output.dataset_name}")
+    )
+    vprint(
+        "discovery",
+        f"complete — '{output.dataset_name}' ({source_type.value})"
+        f" id_field={output.ecg_id_field}"
+        f" official_splits={output.official_splits}",
+    )
     return state
-
-
-def _extract_field(text: str, field: str, default: str) -> str:
-    for line in text.splitlines():
-        if field.lower() in line.lower():
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                return parts[1].strip().strip("`\"'").split()[0] if parts[1].strip() else default
-    return default

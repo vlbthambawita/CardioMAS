@@ -151,21 +151,53 @@ Return ONLY valid Python code. No markdown fences, no explanation."""
     })
     state.script_execution_log.append(exec_result)
 
-    if exec_result.get("exit_code") == 0:
-        vprint("coder", "[green]generate_splits.py ran successfully[/green]")
-        stdout = exec_result.get("stdout", "")
-        ref_checksum = repro.dataset_checksum if repro else ""
-        if ref_checksum and ref_checksum in stdout:
+    # ── Phase 4: strict SHA-256 verification ─────────────────────────────
+    ref_checksum = repro.dataset_checksum if repro else ""
+    try:
+        from cardiomas.agents.verification import ScriptVerificationError, verify_script_sha256
+        verify_script_sha256(exec_result, ref_checksum)
+        state.script_verified = True
+        vprint("coder", "[green]generate_splits.py verified — SHA-256 matches manifest[/green]")
+    except ScriptVerificationError as exc:
+        vprint("coder", f"[yellow]verification failed (attempt 1): {exc}[/yellow]")
+        logger.warning(f"coder: script verification failed — requesting LLM correction")
+        # Send correction prompt and regenerate
+        correction_ctx = (
+            f"The generated generate_splits.py failed verification:\n{exc}\n\n"
+            f"Original context:\n{context}"
+        )
+        corrected_response = run_agent(llm, "coder", gen_msg, extra_context=correction_ctx)
+        corrected_code = _extract_code(corrected_response)
+        gen_path.write_text(corrected_code)
+        state.generated_scripts["generate_splits.py"] = str(gen_path)
+
+        # Re-execute corrected script
+        exec_result2 = execute_script.invoke({
+            "script_path": str(gen_path),
+            "timeout": 120,
+            "working_dir": str(scripts_dir),
+        })
+        state.script_execution_log.append(exec_result2)
+
+        try:
+            verify_script_sha256(exec_result2, ref_checksum)
             state.script_verified = True
-            vprint("coder", "[green]SHA-256 verified — script matches splits.json[/green]")
+            vprint("coder", "[green]corrected script verified — SHA-256 matches[/green]")
+        except ScriptVerificationError as exc2:
+            state.script_verified = False
+            state.errors.append(f"coder: script SHA-256 mismatch after retry: {exc2}")
+            vprint("coder", f"[red]script verification failed after retry: {exc2}[/red]")
+            logger.error(f"coder: script verification failed after retry: {exc2}")
+    except ImportError:
+        # Phase 4 not installed — fall back to basic check
+        if exec_result.get("exit_code") == 0:
+            state.script_verified = True
+            vprint("coder", "[green]generate_splits.py ran successfully[/green]")
         else:
-            state.script_verified = True  # script ran; SHA-256 format varies
-            vprint("coder", "[dim]script ran; SHA-256 comparison skipped (hash format may differ)[/dim]")
-    else:
-        stderr = exec_result.get("stderr", "")[:300]
-        vprint("coder", f"[yellow]script exited {exec_result.get('exit_code')} — saved but unverified[/yellow]")
-        vprint("coder", f"[dim]stderr: {stderr}[/dim]")
-        logger.warning(f"generate_splits.py execution failed: {stderr}")
+            stderr = exec_result.get("stderr", "")[:300]
+            vprint("coder", f"[yellow]script exited {exec_result.get('exit_code')} — saved but unverified[/yellow]")
+            vprint("coder", f"[dim]stderr: {stderr}[/dim]")
+            logger.warning(f"generate_splits.py execution failed: {stderr}")
 
     state.execution_log.append(LogEntry(
         agent="coder", action="complete",

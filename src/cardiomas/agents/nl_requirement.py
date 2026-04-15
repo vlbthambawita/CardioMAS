@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 
+from cardiomas.agents.base import AgentOutputError, run_structured_agent
+from cardiomas.schemas.agent_outputs import NLRequirementOutput
+from cardiomas.schemas.requirement import ParsedRequirement
 from cardiomas.schemas.state import GraphState, LogEntry
 from cardiomas.verbose import vprint
 
@@ -11,10 +13,8 @@ logger = logging.getLogger(__name__)
 
 def nl_requirement_agent(state: GraphState) -> GraphState:
     """Parse a natural language requirement string into structured UserOptions."""
-    from cardiomas.agents.base import run_agent
     from cardiomas.llm_factory import get_llm_for_agent
     from cardiomas.recorder import SessionRecorder
-    from cardiomas.schemas.requirement import ParsedRequirement
 
     requirement = state.user_options.requirement
     if not requirement:
@@ -32,10 +32,9 @@ def nl_requirement_agent(state: GraphState) -> GraphState:
     rec.start_step("nl_requirement", "parse_requirement", inputs={"requirement": requirement[:200]})
     vprint("nl_requirement", f"parsing: \"{requirement[:100]}{'…' if len(requirement) > 100 else ''}\"")
 
-    prefer_cloud = state.user_options.use_cloud_llm
     llm = get_llm_for_agent(
         "nl_requirement",
-        prefer_cloud=prefer_cloud,
+        prefer_cloud=state.user_options.use_cloud_llm,
         agent_llm_map=state.user_options.agent_llm_map,
     )
 
@@ -49,59 +48,39 @@ def nl_requirement_agent(state: GraphState) -> GraphState:
             f"Metadata fields: {', '.join(state.dataset_info.metadata_fields[:20])}\n"
         )
 
-    user_msg = f"""Parse this natural language split requirement into structured JSON.
+    prompt = (
+        f'Parse this natural language split requirement:\n\n"{requirement}"\n\n'
+        "Rules:\n"
+        "- split_ratios values must sum to 1.0; default 70/15/15 if not specified\n"
+        "- stratify_by: exact field name string, or null\n"
+        "- exclusion_filters: list of {\"field\": \"...\", \"op\": \"notna|eq|ne|gt|lt\", \"value\": ...}\n"
+        "- patient_level: true unless user says 'record-level' or 'sample-level'\n"
+        "- seed: integer or null\n"
+        "- notes: anything you cannot parse precisely\n"
+        "- llm_reasoning: brief explanation of your decisions"
+    )
 
-Requirement: "{requirement}"
-
-Return ONLY valid JSON with this exact schema (no extra text before or after):
-{{
-  "split_ratios": {{"train": 0.7, "val": 0.15, "test": 0.15}},
-  "stratify_by": null,
-  "exclusion_filters": [],
-  "patient_level": true,
-  "seed": null,
-  "notes": "",
-  "raw_input": "{requirement.replace('"', "'")}",
-  "llm_reasoning": "explain your parsing decisions here"
-}}
-
-Rules:
-- split_ratios must sum to 1.0; default 70/15/15 if not specified
-- stratify_by: field name string or null
-- exclusion_filters: list of {{"field": "...", "op": "notna|eq|ne|gt|lt", "value": ...}}
-- patient_level: true unless user says "record-level" or "sample-level"
-- seed: integer or null
-- notes: anything you cannot parse precisely"""
-
-    response = run_agent(llm, "nl_requirement", user_msg, extra_context=context)
-
-    # Parse JSON from response
-    parsed: ParsedRequirement
     try:
-        start = response.find("{")
-        end = response.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(response[start:end])
-            parsed = ParsedRequirement(
-                split_ratios=data.get("split_ratios", {"train": 0.7, "val": 0.15, "test": 0.15}),
-                stratify_by=data.get("stratify_by"),
-                exclusion_filters=data.get("exclusion_filters", []),
-                patient_level=data.get("patient_level", True),
-                seed=data.get("seed"),
-                notes=data.get("notes", ""),
-                raw_input=requirement,
-                llm_reasoning=data.get("llm_reasoning", ""),
-            )
-        else:
-            raise ValueError("No JSON object found in response")
-    except Exception as e:
-        logger.warning(f"nl_requirement: JSON parse failed ({e}) — using defaults with note")
-        parsed = ParsedRequirement(
-            raw_input=requirement,
-            notes=f"Automatic parsing failed: {e}. Original requirement preserved for record.",
-            llm_reasoning=response[:400],
+        output: NLRequirementOutput = run_structured_agent(
+            llm, "nl_requirement", prompt, NLRequirementOutput, extra_context=context
+        )
+    except AgentOutputError as exc:
+        logger.error(f"nl_requirement_agent: structured output failed — {exc}")
+        state.errors.append(f"nl_requirement: {exc}")
+        output = NLRequirementOutput(
+            notes=f"Automatic parsing failed: {exc}. Original requirement preserved.",
         )
 
+    parsed = ParsedRequirement(
+        split_ratios=output.split_ratios,
+        stratify_by=output.stratify_by,
+        exclusion_filters=output.exclusion_filters,
+        patient_level=output.patient_level,
+        seed=output.seed,
+        notes=output.notes,
+        raw_input=requirement,
+        llm_reasoning=output.llm_reasoning,
+    )
     state.parsed_requirement = parsed
 
     # Apply parsed values to UserOptions (only override defaults, not explicit user flags)
@@ -112,9 +91,8 @@ Rules:
     if parsed.stratify_by and opts.stratify_by is None:
         updates["stratify_by"] = parsed.stratify_by
     if opts.custom_split is None:
-        # Validate ratios sum
         total = sum(parsed.split_ratios.values())
-        if 0.99 <= total <= 1.01:
+        if 0.98 <= total <= 1.02:
             updates["custom_split"] = {k: v / total for k, v in parsed.split_ratios.items()}
         else:
             logger.warning(f"Parsed ratios sum to {total:.3f} — not applying to custom_split")
@@ -126,7 +104,7 @@ Rules:
 
     state.execution_log.append(LogEntry(
         agent="nl_requirement", action="parsed",
-        detail=f"ratios={parsed.split_ratios} stratify={parsed.stratify_by}"
+        detail=f"ratios={parsed.split_ratios} stratify={parsed.stratify_by}",
     ))
     vprint("nl_requirement", f"parsed — ratios={parsed.split_ratios}, stratify_by={parsed.stratify_by}")
 
