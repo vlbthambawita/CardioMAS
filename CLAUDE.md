@@ -14,8 +14,8 @@ CardioMAS is a locally-runnable multi-agent system that analyzes ECG datasets, g
 # Install in editable mode with dev tools
 pip install -e ".[dev]"
 
-# Ollama must be running with a model pulled (default: gemma4:2b)
-ollama pull gemma4:2b && ollama serve
+# Ollama must be running with a model pulled (default: gemma4:e2b)
+ollama pull gemma4:e2b && ollama serve
 
 # Copy and fill in tokens
 cp .env.example .env
@@ -126,7 +126,7 @@ See `.env.example` for the full list. Key ones:
 
 | Variable | Purpose |
 |---|---|
-| `OLLAMA_MODEL` | Local model name (default `gemma4:2b`) |
+| `OLLAMA_MODEL` | Local model name (default `gemma4:e2b`) |
 | `HF_TOKEN` | Required for pushing to `vlbthambawita/ECGBench` |
 | `GITHUB_TOKEN` | Required for updating `vlbthambawita/CardioMAS` README |
 | `CARDIOMAS_SEED` | Global reproducibility seed (default `42`) |

@@ -111,10 +111,10 @@ Each node is a dedicated LLM-backed agent. The **orchestrator** is the central h
 ## Requirements
 
 - Python ≥ 3.10
-- [Ollama](https://ollama.com/) running locally with a model pulled (default: `gemma4:2b`)
+- [Ollama](https://ollama.com/) running locally with a model pulled (default: `gemma4:e2b`)
 
 ```bash
-ollama pull gemma4:2b
+ollama pull gemma4:e2b
 ollama serve
 pip install cardiomas
 ```
@@ -266,7 +266,7 @@ Only record identifiers are ever published — no raw ECG signals, no patient da
 ```python
 from cardiomas import CardioMAS
 
-mas = CardioMAS(ollama_model="gemma4:2b", seed=42)
+mas = CardioMAS(ollama_model="gemma4:e2b", seed=42)
 
 # Analyze and save locally
 result = mas.analyze("/data/ptb-xl/")
@@ -294,20 +294,20 @@ Any model available in Ollama works. Pull a model, then point CardioMAS at it:
 
 ```bash
 # Default (recommended for full pipeline)
-ollama pull gemma4:2b
+ollama pull gemma4:e2b
 
 # Larger Gemma 4 variants for heavier reasoning tasks
-ollama pull gemma4:12b
+ollama pull gemma4:e4b
 ollama pull gemma4:27b
 
 # DeepSeek Coder — best for the coding agent
 ollama pull deepseek-coder:6.7b
 
 # Use a specific model for the whole pipeline
-OLLAMA_MODEL=gemma4:2b cardiomas analyze /data/ptb-xl/
+OLLAMA_MODEL=gemma4:e2b cardiomas analyze /data/ptb-xl/
 
 # Or set it permanently in .env
-echo "OLLAMA_MODEL=gemma4:2b" >> .env
+echo "OLLAMA_MODEL=gemma4:e2b" >> .env
 ```
 
 ## Per-Agent LLM Configuration
@@ -320,18 +320,18 @@ Each agent can use a different LLM. This is useful when you want a fast, lightwe
 
 ```bash
 # Fallback for all agents
-OLLAMA_MODEL=gemma4:2b
+OLLAMA_MODEL=gemma4:e2b
 
 # Per-agent overrides (all optional)
-AGENT_LLM_ORCHESTRATOR=gemma4:2b
-AGENT_LLM_NL_REQUIREMENT=gemma4:2b
-AGENT_LLM_DISCOVERY=gemma4:2b
-AGENT_LLM_PAPER=gemma4:2b
-AGENT_LLM_ANALYSIS=gemma4:2b
-AGENT_LLM_SPLITTER=gemma4:2b
-AGENT_LLM_SECURITY=gemma4:2b
+AGENT_LLM_ORCHESTRATOR=gemma4:e2b
+AGENT_LLM_NL_REQUIREMENT=gemma4:e2b
+AGENT_LLM_DISCOVERY=gemma4:e2b
+AGENT_LLM_PAPER=gemma4:e2b
+AGENT_LLM_ANALYSIS=gemma4:e2b
+AGENT_LLM_SPLITTER=gemma4:e2b
+AGENT_LLM_SECURITY=gemma4:e2b
 AGENT_LLM_CODER=deepseek-coder:6.7b
-AGENT_LLM_PUBLISHER=gemma4:2b
+AGENT_LLM_PUBLISHER=gemma4:e2b
 ```
 
 Set these in `.env` or export them before running `cardiomas`.
@@ -341,8 +341,8 @@ Set these in `.env` or export them before running `cardiomas`.
 ```bash
 cardiomas analyze /data/ptb-xl/ \
   --llm-coder deepseek-coder:6.7b \
-  --llm-analysis gemma4:12b \
-  --llm-discovery gemma4:2b
+  --llm-analysis gemma4:e4b \
+  --llm-discovery gemma4:e2b
 ```
 
 ### Via Python API
@@ -353,8 +353,8 @@ from cardiomas import CardioMAS
 mas = CardioMAS(
     agent_llms={
         "coder":    "deepseek-coder:6.7b",
-        "analysis": "gemma4:12b",
-        "default":  "gemma4:2b",   # fallback for all other agents
+        "analysis": "gemma4:e4b",
+        "default":  "gemma4:e2b",   # fallback for all other agents
     }
 )
 mas.analyze("/data/ptb-xl/")
@@ -364,22 +364,22 @@ mas.analyze("/data/ptb-xl/")
 
 | Agent | Recommended model | Why |
 |---|---|---|
-| `orchestrator` | `gemma4:2b` | Default — dynamic routing decisions |
-| `nl_requirement` | `gemma4:2b` | Simple parsing task |
-| `discovery` | `gemma4:2b` | Lookup + classification |
-| `paper` | `gemma4:2b` or `gemma4:12b` | Needs to read and summarise papers |
-| `analysis` | `gemma4:2b` or `gemma4:12b` | Statistical reasoning |
-| `splitter` | `gemma4:2b` | Deterministic — LLM role is minimal |
-| `security` | `gemma4:2b` | Pattern matching |
+| `orchestrator` | `gemma4:e2b` | Default — dynamic routing decisions |
+| `nl_requirement` | `gemma4:e2b` | Simple parsing task |
+| `discovery` | `gemma4:e2b` | Lookup + classification |
+| `paper` | `gemma4:e2b` or `gemma4:e4b` | Needs to read and summarise papers |
+| `analysis` | `gemma4:e2b` or `gemma4:e4b` | Statistical reasoning |
+| `splitter` | `gemma4:e2b` | Deterministic — LLM role is minimal |
+| `security` | `gemma4:e2b` | Pattern matching |
 | `coder` | `deepseek-coder:6.7b` | Code generation |
-| `publisher` | `gemma4:2b` | Structured output |
+| `publisher` | `gemma4:e2b` | Structured output |
 
 ### Verbose LLM name display
 
 With `--verbose`, each LLM call shows the model name and backend:
 
 ```
-──────────── paper — LLM call [gemma4:2b @ ollama] ────────────
+──────────── paper — LLM call [gemma4:e2b @ ollama] ────────────
 ```
 
 ## Environment Variables
@@ -388,7 +388,7 @@ Copy `.env.example` to `.env` and fill in as needed.
 
 | Variable | Required for | Default |
 |---|---|---|
-| `OLLAMA_MODEL` | local LLM (default for all agents) | `gemma4:2b` |
+| `OLLAMA_MODEL` | local LLM (default for all agents) | `gemma4:e2b` |
 | `OLLAMA_BASE_URL` | local LLM | `http://localhost:11434` |
 | `AGENT_LLM_<AGENT>` | per-agent model override | *(falls back to `OLLAMA_MODEL`)* |
 | `HF_TOKEN` | `--push` / `cardiomas push` | — |
