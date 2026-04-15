@@ -7,6 +7,73 @@
 
 A locally-runnable multi-agent system that analyzes ECG datasets and generates reproducible train/validation/test splits. Outputs are saved locally by default. Publishing to [vlbthambawita/ECGBench](https://huggingface.co/datasets/vlbthambawita/ECGBench) on HuggingFace is an explicit opt-in step that requires write access.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    CLI(["`**CLI / Python API**
+    cardiomas analyze`"])
+    CLI --> ORCH
+
+    subgraph PIPELINE ["LangGraph Pipeline"]
+        ORCH["🎯 Orchestrator
+        Check HF cache"]
+
+        ORCH -->|cache hit| EXISTING["Return existing\nsplits from HF"]
+        ORCH -->|no cache / --force| DISC
+
+        DISC["🔍 Discovery Agent
+        Identify dataset type,\nsource, metadata"]
+
+        PAPER["📄 Paper Agent
+        Find & parse paper\nExtract split methodology"]
+
+        ANALYSIS["📊 Analysis Agent
+        Scan files, parse CSV metadata\nCompute statistics"]
+
+        SPLIT["✂️ Splitter Agent
+        SHA-256 seeded deterministic splits\nPatient-level / stratified"]
+
+        SEC["🔒 Security Agent
+        PII scan · raw-data check\nPatient leakage detection"]
+
+        PUB["☁️ Publisher Agent
+        Push to HF · Update GitHub README"]
+
+        DISC --> PAPER --> ANALYSIS --> SPLIT --> SEC
+
+        SEC -->|audit failed| ERR["❌ End with error\nBlocked — not saved"]
+        SEC -->|passed, no --push| SAVED["💾 Saved locally"]
+        SEC -->|passed + --push| PUB
+        PUB --> HF[("HuggingFace\nvlbthambawita/ECGBench")]
+    end
+
+    SAVED --> OUT
+    PUB --> OUT
+
+    OUT["`**output/&lt;dataset&gt;/**
+    splits.json
+    split_metadata.json
+    analysis_report.md`"]
+
+    style PIPELINE fill:#1a1a2e,stroke:#4a9eff,color:#fff
+    style ORCH fill:#0f4c75,stroke:#4a9eff,color:#fff
+    style DISC fill:#1b4332,stroke:#40916c,color:#fff
+    style PAPER fill:#3b1f5e,stroke:#9b59b6,color:#fff
+    style ANALYSIS fill:#7b4220,stroke:#e67e22,color:#fff
+    style SPLIT fill:#1a5276,stroke:#2e86c1,color:#fff
+    style SEC fill:#641e16,stroke:#e74c3c,color:#fff
+    style PUB fill:#145a32,stroke:#27ae60,color:#fff
+    style SAVED fill:#1a3a1a,stroke:#27ae60,color:#fff
+    style ERR fill:#3b0f0f,stroke:#e74c3c,color:#fff
+    style HF fill:#2d2d2d,stroke:#f5a623,color:#fff
+    style OUT fill:#2d2d2d,stroke:#4a9eff,color:#fff
+    style EXISTING fill:#2d2d2d,stroke:#4a9eff,color:#fff
+    style CLI fill:#0d0d0d,stroke:#4a9eff,color:#fff
+```
+
+Each node is a dedicated LLM-backed agent. Agents communicate only through the shared `GraphState`. The security agent is a hard gate — publishing is blocked if any check fails.
+
 ## Requirements
 
 - Python ≥ 3.10
@@ -26,6 +93,9 @@ cardiomas analyze https://physionet.org/content/ptb-xl/1.0.3/
 
 # Use a local directory
 cardiomas analyze /data/ptb-xl/
+
+# Stream all agent reasoning live
+cardiomas analyze /data/ptb-xl/ --verbose
 
 # Analyze and push to HuggingFace in one step (requires HF_TOKEN)
 cardiomas analyze /data/ptb-xl/ --push
@@ -62,8 +132,39 @@ cardiomas analyze DATASET_SOURCE [OPTIONS]
 | `--push` | | Also push to HuggingFace (requires `HF_TOKEN`) |
 | `--force-reanalysis` | | Re-run even if already analyzed |
 | `--use-cloud-llm` | | Use cloud LLM instead of local Ollama |
-| `--verbose` / `-v` | | Stream agent reasoning live |
+| `--verbose` / `-v` | | Stream agent reasoning and LLM calls live |
 | `--json` | | Machine-readable JSON output |
+
+#### Verbose output
+
+`--verbose` (`-v`) prints every agent step and LLM prompt/response in real time instead of showing a spinner:
+
+```bash
+cardiomas analyze /data/ptb-xl/ -v
+```
+
+```
+Verbose mode on — streaming agent output below.
+
+  [orchestrator] pipeline start — source: /data/ptb-xl/
+  [orchestrator] no cache hit — running full pipeline
+  [discovery]    registry hit → ptb-xl
+  [paper]        searching arXiv: 'ptb-xl ECG dataset electrocardiogram'
+  [paper]        found 3 result(s)
+  [paper]        calling LLM (ChatOllama)…
+──────────────── paper — LLM call ────────────────
+╭─ prompt ────────────────────────────────────────╮
+│ Analyze this ECG dataset paper and extract: …  │
+╰─────────────────────────────────────────────────╯
+╭─ response ──────────────────────────────────────╮
+│ 1. Official splits: Yes (Section 2.3, page 4)  │
+╰─────────────────────────────────────────────────╯
+  [analysis]     found 42 files
+  [splitter]     saved splits → output/ptb-xl/splits.json
+  [security]     audit PASSED — no PII, no raw data, no leakage
+```
+
+Each agent is color-coded. Without `--verbose`, only a spinner runs during the pipeline and a summary table is shown at the end.
 
 ### `cardiomas push`
 
@@ -74,7 +175,7 @@ cardiomas push ptb-xl
 cardiomas push ptb-xl --output-dir /my/results
 ```
 
-Runs a security audit (PII check, raw-data check, patient leakage check) before uploading. Refuses to push if any check fails.
+Runs a security audit before uploading. Refuses to push if any check fails.
 
 ### `cardiomas status`
 
@@ -153,14 +254,110 @@ mas.analyze(
 )
 ```
 
+## Using Different Local Models
+
+Any model available in Ollama works. Pull a model, then point CardioMAS at it:
+
+```bash
+# Default (recommended for full pipeline)
+ollama pull llama3.1:8b
+
+# Gemma models (Google) — lighter, fast on CPU
+ollama pull gemma3:4b
+ollama pull gemma3:12b
+ollama pull gemma3:27b
+
+# DeepSeek Coder — best for the coding agent
+ollama pull deepseek-coder:6.7b
+
+# Use a specific model for the whole pipeline
+OLLAMA_MODEL=gemma3:4b cardiomas analyze /data/ptb-xl/
+
+# Or set it permanently in .env
+echo "OLLAMA_MODEL=gemma3:4b" >> .env
+```
+
+## Per-Agent LLM Configuration
+
+> **Available in v0.2.0 (dev/v2-dynamic-orchestrator)**
+
+Each agent can use a different LLM. This is useful when you want a fast, lightweight model for simple tasks (discovery, security scan) and a more capable model for reasoning-heavy tasks (analysis, coding).
+
+### Via environment variables
+
+```bash
+# Fallback for all agents
+OLLAMA_MODEL=llama3.1:8b
+
+# Per-agent overrides (all optional)
+AGENT_LLM_ORCHESTRATOR=llama3.1:8b
+AGENT_LLM_NL_REQUIREMENT=gemma3:4b
+AGENT_LLM_DISCOVERY=gemma3:4b
+AGENT_LLM_PAPER=llama3.1:8b
+AGENT_LLM_ANALYSIS=llama3.1:8b
+AGENT_LLM_SPLITTER=gemma3:4b
+AGENT_LLM_SECURITY=gemma3:4b
+AGENT_LLM_CODER=deepseek-coder:6.7b
+AGENT_LLM_PUBLISHER=gemma3:4b
+```
+
+Set these in `.env` or export them before running `cardiomas`.
+
+### Via CLI flags
+
+```bash
+cardiomas analyze /data/ptb-xl/ \
+  --llm-coder deepseek-coder:6.7b \
+  --llm-analysis llama3.1:8b \
+  --llm-discovery gemma3:4b
+```
+
+### Via Python API
+
+```python
+from cardiomas import CardioMAS
+
+mas = CardioMAS(
+    agent_llms={
+        "coder":    "deepseek-coder:6.7b",
+        "analysis": "llama3.1:8b",
+        "default":  "gemma3:4b",   # fallback for all other agents
+    }
+)
+mas.analyze("/data/ptb-xl/")
+```
+
+### Model recommendations
+
+| Agent | Recommended model | Why |
+|---|---|---|
+| `orchestrator` | `llama3.1:8b` | Reasoning-heavy routing decisions |
+| `nl_requirement` | `gemma3:4b` | Simple parsing task |
+| `discovery` | `gemma3:4b` | Lookup + classification |
+| `paper` | `llama3.1:8b` | Needs to read and summarise papers |
+| `analysis` | `llama3.1:8b` or `llama3.1:70b` | Statistical reasoning |
+| `splitter` | `gemma3:4b` | Deterministic — LLM role is minimal |
+| `security` | `gemma3:4b` | Pattern matching |
+| `coder` | `deepseek-coder:6.7b` | Code generation |
+| `publisher` | `gemma3:4b` | Structured output |
+
+### Verbose LLM name display
+
+With `--verbose`, each LLM call shows the model name and backend:
+
+```
+──────────── paper — LLM call [llama3.1:8b @ ollama] ────────────
+```
+
 ## Environment Variables
 
 Copy `.env.example` to `.env` and fill in as needed.
 
 | Variable | Required for | Default |
 |---|---|---|
-| `OLLAMA_MODEL` | local LLM | `llama3.1:8b` |
+| `OLLAMA_MODEL` | local LLM (default for all agents) | `llama3.1:8b` |
 | `OLLAMA_BASE_URL` | local LLM | `http://localhost:11434` |
+| `AGENT_LLM_<AGENT>` | per-agent model override | *(falls back to `OLLAMA_MODEL`)* |
 | `HF_TOKEN` | `--push` / `cardiomas push` | — |
 | `GITHUB_TOKEN` | GitHub README auto-update | — |
 | `CARDIOMAS_SEED` | reproducibility | `42` |
