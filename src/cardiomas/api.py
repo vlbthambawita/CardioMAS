@@ -95,27 +95,36 @@ class CardioMAS:
 
     def organize(
         self,
-        dataset_dir: str,
+        dataset_dir: str | None = None,
         dataset_name: str | None = None,
         knowledge_urls: list[str] | None = None,
-        goal: str = "Build reusable dataset knowledge and analysis artifacts",
-        output_dir: str = "organization_output",
-        approve: bool = False,
+        goal: str | None = None,
+        output_dir: str | None = None,
+        approve: bool | None = None,
+        config_path: str | None = None,
     ) -> dict[str, Any]:
         """Run the organization-style workflow on a local dataset directory."""
         from pathlib import Path
 
-        from cardiomas.organization import build_default_organization
+        from cardiomas.organization import build_default_organization, resolve_organization_config
 
-        dataset_path = Path(dataset_dir)
-        resolved_name = dataset_name or dataset_path.name
-        result = build_default_organization().run(
+        config = resolve_organization_config(
+            config_path=config_path,
+            dataset_dir=dataset_dir,
+            dataset_name=dataset_name,
+            knowledge_urls=knowledge_urls,
             goal=goal,
-            dataset_name=resolved_name,
-            dataset_dir=str(dataset_path),
-            knowledge_urls=knowledge_urls or [],
             output_dir=output_dir,
             approve=approve,
+        )
+        dataset_path = Path(config.resolved_dataset_dir)
+        result = build_default_organization().run(
+            goal=config.goal,
+            dataset_name=config.dataset_name or dataset_path.name,
+            dataset_dir=str(dataset_path),
+            knowledge_urls=config.knowledge_urls,
+            output_dir=config.output_dir,
+            approve=config.approve,
         )
         return result.model_dump(mode="json")
 

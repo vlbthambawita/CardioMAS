@@ -72,3 +72,40 @@ def test_organize_command(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert "Organization workflow" in result.output
     assert "approved" in result.output
+
+
+def test_organize_command_from_config(monkeypatch, tmp_path):
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    (dataset_dir / "metadata.csv").write_text("record_id,patient_id,label\nr1,p1,NORM\n", encoding="utf-8")
+    config_path = tmp_path / "organize.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "dataset_name: config-ecg",
+                f"local_data_path: {dataset_dir}",
+                "knowledge_urls:",
+                "  - https://example.org/demo",
+                "approve: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_fetch(url: str, rate_limit_seconds: float = 0.0) -> PageKnowledge:
+        return PageKnowledge(
+            url=url,
+            title="Dataset card",
+            description="Demo ECG dataset",
+            headings=["Overview"],
+            content_blocks=["Contains ECG examples."],
+            links=[url],
+            provenance=SourceProvenance(url=url, fetch_method="test"),
+        )
+
+    monkeypatch.setattr("cardiomas.knowledge_department.pipeline.fetch_and_parse_page", fake_fetch)
+    result = runner.invoke(app, ["organize", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "config-ecg" in result.output
+    assert "approved" in result.output

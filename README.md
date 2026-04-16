@@ -5,7 +5,12 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![HuggingFace](https://img.shields.io/badge/HF-vlbthambawita%2FECGBench-yellow)](https://huggingface.co/datasets/vlbthambawita/ECGBench)
 
-A locally-runnable multi-agent system that analyzes ECG datasets and generates reproducible train/validation/test splits. Outputs are saved locally by default. Publishing to [vlbthambawita/ECGBench](https://huggingface.co/datasets/vlbthambawita/ECGBench) on HuggingFace is an explicit opt-in step that requires write access.
+A locally-runnable multi-agent system for ECG datasets. The repository currently supports two execution styles:
+
+- `cardiomas analyze`: the existing LangGraph pipeline for reproducible train/validation/test split generation.
+- `cardiomas organize`: the newer organization-style workflow with an `OrganizationHead` coordinating Knowledge, Coding, Cardiology, and Testing departments.
+
+Outputs are saved locally by default. Publishing to [vlbthambawita/ECGBench](https://huggingface.co/datasets/vlbthambawita/ECGBench) on HuggingFace is an explicit opt-in step that requires write access.
 
 ## Architecture
 
@@ -111,12 +116,18 @@ Each node is a dedicated LLM-backed agent. The **orchestrator** is the central h
 ## Requirements
 
 - Python ≥ 3.10
-- [Ollama](https://ollama.com/) running locally with a model pulled (default: `gemma4:e2b`)
+- [Ollama](https://ollama.com/) running locally with a model pulled (default: `gemma4:e2b`) for `cardiomas analyze`
 
 ```bash
+# Local development install
+pip install -e ".[dev]"
+
+# Optional: richer browser-backed fetching for the Knowledge Department
+scrapling install
+
+# Required only for the LangGraph / LLM pipeline
 ollama pull gemma4:e2b
 ollama serve
-pip install cardiomas
 ```
 
 ## Quick Start
@@ -137,32 +148,129 @@ cardiomas analyze /data/ptb-xl/ --push
 
 ## Organizational Workflow
 
-The repository also includes an organizational-style workflow that routes work through an `OrganizationHead` and four departments: Knowledge, Coding, Cardiology, and Testing. This flow is additive to the existing LangGraph pipeline and is designed for inspectable artifact generation.
+The repository also includes an organizational-style workflow that routes all work through an `OrganizationHead` and four departments:
+
+- Knowledge Department: fetches and normalizes dataset knowledge from provided URLs.
+- Coding Department: inspects a local dataset directory and writes reusable analysis artifacts.
+- Cardiology Department: emits ECG-specific quality and split recommendations.
+- Testing Department: validates generated coding outputs and writes structured reports.
+
+This flow is additive to the existing LangGraph pipeline and is designed for inspectable artifact generation. The current `organize` path does not require Ollama.
+
+### How To Run The New Structure
+
+1. Install the repository in editable mode:
 
 ```bash
-# Install in editable mode; Scrapling is included for knowledge collection
 pip install -e ".[dev]"
+```
 
-# Optional Scrapling browser setup for richer fetching
+2. Optionally install Scrapling browser support for richer page fetching:
+
+```bash
 scrapling install
+```
 
-# Run the organization workflow on a local dataset directory
+3. Run the example workflow on the included tiny dataset:
+
+```bash
+cardiomas organize --config examples/tiny_ecg_dataset/organization_config.yaml
+```
+
+or pass values directly:
+
+```bash
+cardiomas organize examples/tiny_ecg_dataset \
+  --dataset-name tiny-ecg-demo \
+  --knowledge-url https://example.org/dataset-card
+```
+
+4. Review the generated artifacts under `organization_output/`. If you want the Organization Head to mark the major artifacts as approved, re-run with `--approve`:
+
+```bash
 cardiomas organize examples/tiny_ecg_dataset \
   --dataset-name tiny-ecg-demo \
   --knowledge-url https://example.org/dataset-card \
   --approve
 ```
 
-By default this writes:
+By default this writes a department-oriented artifact tree:
 
 ```text
 organization_output/
   knowledge/datasets/<dataset_name>/
+    overview.json
+    references.json
+    notes.md
+    schema.json
   tools/<dataset_name>/
+    dataset_inventory.json
+    file_extensions.csv
+    dataset_inventory.md
   reports/<dataset_name>/
+    ecg_review.json
+    ecg_review.md
+    tool_validation.json
+    tool_validation.md
 ```
 
-The generated artifacts include reusable knowledge files (`overview.json`, `references.json`, `notes.md`, `schema.json`), dataset inventory outputs (`dataset_inventory.json`, `file_extensions.csv`, `dataset_inventory.md`), a cardiology review, and a structured test report.
+You can repeat `--knowledge-url` multiple times to provide a dataset landing page, paper URL, and documentation pages in the same run:
+
+```bash
+cardiomas organize /data/my-ecg-dataset \
+  --dataset-name my-ecg-dataset \
+  --knowledge-url https://dataset-homepage.example \
+  --knowledge-url https://paper.example \
+  --knowledge-url https://docs.example
+```
+
+You can also drive the entire workflow from a YAML or JSON config file. Example:
+
+```yaml
+dataset_name: ptb-xl
+local_data_path: /data/ptb-xl
+knowledge_urls:
+  - https://physionet.org/content/ptb-xl/1.0.3/
+  - https://example.org/ptb-xl-paper
+goal: Prepare reusable dataset understanding artifacts
+output_dir: organization_output/ptb-xl
+approve: true
+```
+
+Supported config keys:
+
+- `local_data_path` or `dataset_dir`: local dataset directory
+- `dataset_name`: output dataset name
+- `knowledge_urls` or `knowledge_links`: one or more documentation/paper URLs
+- `goal`: high-level organization objective
+- `output_dir`: artifact root directory
+- `approve`: mark final artifacts as approved
+
+Relative paths in the config file are resolved relative to the config file location.
+
+Run it with:
+
+```bash
+cardiomas organize --config /path/to/organization.yaml
+```
+
+CLI values can still override the config file. For example, this reuses the same config but changes the dataset path:
+
+```bash
+cardiomas organize /data/ptb-xl-copy --config /path/to/organization.yaml
+```
+
+You can also run the same workflow from Python:
+
+```python
+from cardiomas import CardioMAS
+
+cm = CardioMAS()
+result = cm.organize(
+    config_path="examples/tiny_ecg_dataset/organization_config.yaml",
+)
+print(result["status"])
+```
 
 After `analyze`, the following files are written locally:
 
@@ -228,6 +336,30 @@ Verbose mode on — streaming agent output below.
 ```
 
 Each agent is color-coded. Without `--verbose`, only a spinner runs during the pipeline and a summary table is shown at the end.
+
+### `cardiomas organize`
+
+Run the organization-style workflow on a local dataset directory.
+
+```bash
+cardiomas organize DATASET_DIR [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--dataset-name TEXT` | folder name | Override the dataset name used in output paths |
+| `--config`, `-c` PATH | | YAML or JSON config file with dataset path, links, and run settings |
+| `--goal TEXT` | `Build reusable dataset knowledge and analysis artifacts` | High-level goal tracked by the Organization Head |
+| `--knowledge-url TEXT` | | Repeat to provide landing pages, paper links, or docs |
+| `--output-dir PATH` | `organization_output` | Root directory for knowledge, tool, and report artifacts |
+| `--approve` | | Mark major artifacts as approved in the final organization report |
+| `--json` | | Machine-readable JSON output |
+
+Example:
+
+```bash
+cardiomas organize --config examples/tiny_ecg_dataset/organization_config.yaml
+```
 
 ### `cardiomas push`
 

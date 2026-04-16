@@ -503,40 +503,58 @@ def verify(
 
 @app.command()
 def organize(
-    dataset_dir: Annotated[str, typer.Argument(help="Local dataset directory to analyze")],
+    dataset_dir: Annotated[Optional[str], typer.Argument(help="Local dataset directory to analyze")] = None,
     dataset_name: Annotated[Optional[str], typer.Option("--dataset-name")] = None,
-    goal: Annotated[str, typer.Option("--goal")] = "Build reusable dataset knowledge and analysis artifacts",
+    config_path: Annotated[Optional[str], typer.Option("--config", "-c", help="YAML or JSON file containing organize inputs")] = None,
+    goal: Annotated[Optional[str], typer.Option("--goal")] = None,
     knowledge_url: Annotated[Optional[list[str]], typer.Option("--knowledge-url", help="Repeat to provide dataset landing pages, docs, or paper links")] = None,
-    output_dir: Annotated[str, typer.Option("--output-dir")] = "organization_output",
+    output_dir: Annotated[Optional[str], typer.Option("--output-dir")] = None,
     approve: Annotated[bool, typer.Option("--approve", help="Mark major artifacts as approved in the final report")] = False,
     output_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Run the organization-style workflow for dataset knowledge, tooling, testing, and ECG review."""
-    from cardiomas.organization import build_default_organization
+    from cardiomas.organization import build_default_organization, resolve_organization_config
 
-    dataset_path = Path(dataset_dir)
+    if not dataset_dir and not config_path:
+        console.print("[red]Provide a DATASET_DIR argument or pass --config with local_data_path/dataset_dir.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        config = resolve_organization_config(
+            config_path=config_path,
+            dataset_dir=dataset_dir,
+            dataset_name=dataset_name,
+            knowledge_urls=knowledge_url,
+            goal=goal,
+            output_dir=output_dir,
+            approve=True if approve else None,
+        )
+    except Exception as exc:
+        console.print(f"[red]Could not load organization config:[/red] {exc}")
+        raise typer.Exit(1)
+
+    dataset_path = Path(config.resolved_dataset_dir)
     if not dataset_path.exists():
-        console.print(f"[red]Dataset directory not found:[/red] {dataset_dir}")
+        console.print(f"[red]Dataset directory not found:[/red] {dataset_path}")
         raise typer.Exit(1)
     if not dataset_path.is_dir():
-        console.print(f"[red]Dataset path is not a directory:[/red] {dataset_dir}")
+        console.print(f"[red]Dataset path is not a directory:[/red] {dataset_path}")
         raise typer.Exit(1)
 
-    resolved_name = dataset_name or dataset_path.name
     result = build_default_organization().run(
-        goal=goal,
-        dataset_name=resolved_name,
+        goal=config.goal,
+        dataset_name=config.dataset_name or dataset_path.name,
         dataset_dir=str(dataset_path),
-        knowledge_urls=knowledge_url or [],
-        output_dir=output_dir,
-        approve=approve,
+        knowledge_urls=config.knowledge_urls,
+        output_dir=config.output_dir,
+        approve=config.approve,
     )
 
     if output_json:
         rprint(json.dumps(result.model_dump(mode="json"), indent=2, default=str))
         return
 
-    console.print(f"[bold]Organization workflow:[/bold] {resolved_name}")
+    console.print(f"[bold]Organization workflow:[/bold] {config.dataset_name or dataset_path.name}")
     console.print(f"Status: [cyan]{result.status}[/cyan]")
     console.print(f"Output: [cyan]{result.output_dir}[/cyan]")
 

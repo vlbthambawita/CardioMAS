@@ -1,0 +1,7 @@
+dataset_name: tiny-ecg-demo
+local_data_path: examples/tiny_ecg_dataset
+knowledge_urls:
+  - https://example.org/dataset-card
+goal: Build reusable dataset knowledge and analysis artifacts
+output_dir: ../../organization_output/tiny-ecg-demo
+approve: true
