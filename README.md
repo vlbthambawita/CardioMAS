@@ -135,6 +135,35 @@ cardiomas analyze /data/ptb-xl/ --verbose
 cardiomas analyze /data/ptb-xl/ --push
 ```
 
+## Organizational Workflow
+
+The repository also includes an organizational-style workflow that routes work through an `OrganizationHead` and four departments: Knowledge, Coding, Cardiology, and Testing. This flow is additive to the existing LangGraph pipeline and is designed for inspectable artifact generation.
+
+```bash
+# Install in editable mode; Scrapling is included for knowledge collection
+pip install -e ".[dev]"
+
+# Optional Scrapling browser setup for richer fetching
+scrapling install
+
+# Run the organization workflow on a local dataset directory
+cardiomas organize examples/tiny_ecg_dataset \
+  --dataset-name tiny-ecg-demo \
+  --knowledge-url https://example.org/dataset-card \
+  --approve
+```
+
+By default this writes:
+
+```text
+organization_output/
+  knowledge/datasets/<dataset_name>/
+  tools/<dataset_name>/
+  reports/<dataset_name>/
+```
+
+The generated artifacts include reusable knowledge files (`overview.json`, `references.json`, `notes.md`, `schema.json`), dataset inventory outputs (`dataset_inventory.json`, `file_extensions.csv`, `dataset_inventory.md`), a cardiology review, and a structured test report.
+
 After `analyze`, the following files are written locally:
 
 ```

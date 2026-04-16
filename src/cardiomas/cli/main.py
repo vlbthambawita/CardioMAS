@@ -502,6 +502,56 @@ def verify(
 
 
 @app.command()
+def organize(
+    dataset_dir: Annotated[str, typer.Argument(help="Local dataset directory to analyze")],
+    dataset_name: Annotated[Optional[str], typer.Option("--dataset-name")] = None,
+    goal: Annotated[str, typer.Option("--goal")] = "Build reusable dataset knowledge and analysis artifacts",
+    knowledge_url: Annotated[Optional[list[str]], typer.Option("--knowledge-url", help="Repeat to provide dataset landing pages, docs, or paper links")] = None,
+    output_dir: Annotated[str, typer.Option("--output-dir")] = "organization_output",
+    approve: Annotated[bool, typer.Option("--approve", help="Mark major artifacts as approved in the final report")] = False,
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Run the organization-style workflow for dataset knowledge, tooling, testing, and ECG review."""
+    from cardiomas.organization import build_default_organization
+
+    dataset_path = Path(dataset_dir)
+    if not dataset_path.exists():
+        console.print(f"[red]Dataset directory not found:[/red] {dataset_dir}")
+        raise typer.Exit(1)
+    if not dataset_path.is_dir():
+        console.print(f"[red]Dataset path is not a directory:[/red] {dataset_dir}")
+        raise typer.Exit(1)
+
+    resolved_name = dataset_name or dataset_path.name
+    result = build_default_organization().run(
+        goal=goal,
+        dataset_name=resolved_name,
+        dataset_dir=str(dataset_path),
+        knowledge_urls=knowledge_url or [],
+        output_dir=output_dir,
+        approve=approve,
+    )
+
+    if output_json:
+        rprint(json.dumps(result.model_dump(mode="json"), indent=2, default=str))
+        return
+
+    console.print(f"[bold]Organization workflow:[/bold] {resolved_name}")
+    console.print(f"Status: [cyan]{result.status}[/cyan]")
+    console.print(f"Output: [cyan]{result.output_dir}[/cyan]")
+
+    for report in result.department_reports:
+        console.print(f"\n[bold]{report.department}[/bold] {report.summary}")
+        for artifact in report.artifacts:
+            console.print(f"  - {artifact.name}: {artifact.path}")
+        for note in report.notes:
+            console.print(f"  - note: {note}")
+
+    if result.status == "awaiting_approval":
+        console.print("\n[dim]Re-run with --approve to mark major artifacts as approved.[/dim]")
+
+
+@app.command()
 def version() -> None:
     """Print the installed CardioMAS version."""
     from cardiomas import __version__

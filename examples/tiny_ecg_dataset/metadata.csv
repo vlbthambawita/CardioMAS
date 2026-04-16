@@ -1,0 +1,5 @@
+record_id,patient_id,label,sampling_rate_hz,quality_flag
+rec_0001,pat_001,NORM,500,ok
+rec_0002,pat_001,NORM,500,ok
+rec_0003,pat_002,AFIB,500,review
+rec_0004,pat_003,MI,500,ok

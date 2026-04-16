@@ -93,6 +93,32 @@ class CardioMAS:
         state = run_pipeline(source, options)
         return state.model_dump(mode="json")
 
+    def organize(
+        self,
+        dataset_dir: str,
+        dataset_name: str | None = None,
+        knowledge_urls: list[str] | None = None,
+        goal: str = "Build reusable dataset knowledge and analysis artifacts",
+        output_dir: str = "organization_output",
+        approve: bool = False,
+    ) -> dict[str, Any]:
+        """Run the organization-style workflow on a local dataset directory."""
+        from pathlib import Path
+
+        from cardiomas.organization import build_default_organization
+
+        dataset_path = Path(dataset_dir)
+        resolved_name = dataset_name or dataset_path.name
+        result = build_default_organization().run(
+            goal=goal,
+            dataset_name=resolved_name,
+            dataset_dir=str(dataset_path),
+            knowledge_urls=knowledge_urls or [],
+            output_dir=output_dir,
+            approve=approve,
+        )
+        return result.model_dump(mode="json")
+
     def status(self, dataset_name: str) -> dict[str, Any]:
         """Check if a dataset has splits on HuggingFace."""
         from cardiomas import config as cfg
