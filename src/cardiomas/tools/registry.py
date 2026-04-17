@@ -45,6 +45,16 @@ class ToolRegistry:
         return "\n".join(lines) or "(no tools available)"
 
 
+def _path_kwarg(**kwargs: object) -> str:
+    """Normalise LLM arg spelling: 'path', 'dataset_path', 'directory' → str."""
+    return str(
+        kwargs.get("path")
+        or kwargs.get("dataset_path")
+        or kwargs.get("directory")
+        or ""
+    )
+
+
 def build_registry(
     config: RuntimeConfig,
     chunks,
@@ -75,13 +85,18 @@ def build_registry(
                 name="list_folder_structure",
                 description=(
                     "Return a tree-formatted listing of every file and sub-directory inside "
-                    "a given dataset path, including file sizes and CSV/TSV column headers. "
+                    "a given dataset directory, including file sizes and CSV/TSV column headers. "
+                    "Required argument: 'path' (string) — absolute path to the directory. "
+                    "Optional: 'max_depth' (int, default 4). "
                     "Use this first when you need to understand which files are available "
                     "and how the data is organised before deciding what to read or compute."
                 ),
                 category="dataset",
             ),
-            list_folder_structure,
+            lambda **kw: list_folder_structure(
+                path=_path_kwarg(**kw),
+                max_depth=int(kw.get("max_depth", 4)),
+            ),
         )
 
     if "read_wfdb_dataset" in config.tools.enabled:
@@ -94,24 +109,31 @@ def build_registry(
                     "header files (.hea), parses signal names (leads), sampling frequencies, "
                     "recording durations, ADC units, and detects annotation file types "
                     "(.atr, .ecg, .ann, etc.) and signal file formats (.dat, .edf, .mat). "
-                    "Use this tool when the dataset contains .hea files and you need to know "
+                    "Required argument: 'path' (string) — absolute path to the WFDB dataset root. "
+                    "Optional: 'max_records' (int, default 20). "
+                    "Use this when the dataset contains .hea files and you need to know "
                     "which ECG leads are recorded, at what sampling rate, how long each "
-                    "recording is, or what annotations are available before writing analysis "
-                    "code. Works with or without the wfdb Python library installed."
+                    "recording is, or what annotations are available."
                 ),
                 category="dataset",
             ),
-            read_wfdb_dataset,
+            lambda **kw: read_wfdb_dataset(
+                path=_path_kwarg(**kw),
+                max_records=int(kw.get("max_records", 20)),
+            ),
         )
 
     if "inspect_dataset" in config.tools.enabled:
         registry.register(
             ToolSpec(
                 name="inspect_dataset",
-                description="Inspect a local dataset directory and summarize files and CSV headers.",
+                description=(
+                    "Inspect a local dataset directory and summarize files and CSV headers. "
+                    "Required argument: 'path' (string) — absolute path to the directory."
+                ),
                 category="dataset",
             ),
-            inspect_dataset,
+            lambda **kw: inspect_dataset(path=_path_kwarg(**kw)),
         )
 
     if "calculate" in config.tools.enabled:
@@ -126,17 +148,27 @@ def build_registry(
 
     if "read_dataset_website" in config.tools.enabled:
         web_sources = _configured_web_urls(config)
+        # Build a label→URL lookup so the agent can call the tool with a label
+        label_to_url: dict[str, str] = {label: url for label, url in web_sources}
+
         if web_sources:
-            url_hints = "; ".join(f"{label} → {url}" for label, url in web_sources)
+            url_list = "; ".join(f"'{label}' ({url})" for label, url in web_sources)
             configured_note = (
-                f" The following dataset websites are already configured in this "
-                f"session and are the primary targets for this tool: {url_hints}."
+                f" Configured dataset websites (pass the full URL or the label as 'url'): "
+                f"{url_list}."
             )
         else:
             configured_note = (
-                " No dataset website URLs are configured yet — the user can add "
-                "them under 'sources' with 'kind: web_page' in the YAML config."
+                " No dataset website URLs configured yet — add them under 'sources' "
+                "with 'kind: web_page' in the YAML config."
             )
+
+        def _resolve_and_fetch(**kw: object) -> ToolResult:
+            raw = str(kw.get("url", "")).strip()
+            # If the agent passed a label instead of a URL, resolve it
+            resolved = label_to_url.get(raw, raw)
+            return read_dataset_website(url=resolved, config=config)
+
         registry.register(
             ToolSpec(
                 name="read_dataset_website",
@@ -145,14 +177,15 @@ def build_registry(
                     "Zenodo, Kaggle, or any research data portal) and extract structured "
                     "metadata: description, file listing, signal/variable names, sampling "
                     "frequency, record count, annotation types, license, DOI, and download "
-                    "links. Use this before writing analysis code when you need to understand "
-                    "what data the dataset contains, how it is organised, or what the "
-                    "columns/signals represent. Takes a single 'url' argument."
+                    "links. Required argument: 'url' (string) — full URL starting with "
+                    "http:// or https://, or a configured label (see below). "
+                    "Use this before writing analysis code to understand what the dataset "
+                    "contains, how it is organised, or what the columns/signals represent."
                     + configured_note
                 ),
                 category="research",
             ),
-            lambda url: read_dataset_website(url=url, config=config),
+            _resolve_and_fetch,
         )
 
     if "fetch_webpage" in config.tools.enabled:
@@ -170,8 +203,44 @@ def build_registry(
             if registry.has(spec.name):
                 continue
             if spec.name == "generate_python_artifact":
-                registry.register(spec, autonomy_manager.generate_python_artifact)
+                # Normalise LLM argument spelling: 'code'/'description' → 'task',
+                # 'dataset_path'/'directory' → 'dataset_path'
+                def _gen_python(**kw: object) -> ToolResult:
+                    return autonomy_manager.generate_python_artifact(
+                        task=str(
+                            kw.get("task")
+                            or kw.get("code")
+                            or kw.get("description")
+                            or kw.get("prompt")
+                            or ""
+                        ),
+                        dataset_path=str(
+                            kw.get("dataset_path")
+                            or kw.get("path")
+                            or kw.get("directory")
+                            or ""
+                        ),
+                        target_path=str(kw.get("target_path", "")),
+                        artifact_name=str(kw.get("artifact_name", "")),
+                    )
+                registry.register(spec, _gen_python)
             elif spec.name == "generate_shell_artifact":
-                registry.register(spec, autonomy_manager.generate_shell_artifact)
+                def _gen_shell(**kw: object) -> ToolResult:
+                    return autonomy_manager.generate_shell_artifact(
+                        task=str(
+                            kw.get("task")
+                            or kw.get("code")
+                            or kw.get("description")
+                            or kw.get("prompt")
+                            or ""
+                        ),
+                        dataset_path=str(
+                            kw.get("dataset_path")
+                            or kw.get("path")
+                            or kw.get("directory")
+                            or ""
+                        ),
+                    )
+                registry.register(spec, _gen_shell)
 
     return registry

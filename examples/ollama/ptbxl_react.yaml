@@ -1,5 +1,5 @@
 system_name: CardioMAS-ReAct
-output_dir: runtime_output/react-mode/ptbxl
+output_dir: runtime_output/react-mode/ptbxl_v2
 sources:
   - kind: dataset_dir
     path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
@@ -11,7 +11,7 @@ sources:
     url: https://physionet.org/content/ptb-xl-plus/1.0.1/
     label: ptbxl-plus-physionet-page
 
-scripts_dir: runtime_output/scripts/ptbxl-react
+scripts_dir: runtime_output/scripts/ptbxl-react_v2
 
 retrieval:
   mode: bm25
