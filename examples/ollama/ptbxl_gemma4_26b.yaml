@@ -1,0 +1,66 @@
+system_name: CardioMAS-Gemma4-26b
+output_dir: runtime_output/react-mode/ptbxl_gemma4_26b
+
+sources:
+  - kind: dataset_dir
+    path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
+    label: ptbxl
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl/1.0.3/
+    label: ptbxl-physionet-page
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl-plus/1.0.1/
+    label: ptbxl-plus-physionet-page
+
+scripts_dir: runtime_output/scripts/ptbxl-gemma4-26b
+
+retrieval:
+  mode: bm25
+  top_k: 5
+  chunk_size: 700
+
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: gemma4:26b
+  temperature: 0.1
+  max_tokens: 1200
+  code_max_tokens: 4000
+  code_temperature: 0.2
+  timeout_seconds: 120.0
+
+agent:
+  mode: react
+  max_iterations: 10
+  query_decomposition: false
+  self_reflection: true
+  retrieval_grading: true
+  memory_mode: persistent
+  persistent_memory_max: 200
+  upfront_planning: true
+  step_reflection: true
+  scratchpad: true
+  tool_verification: true
+
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  dataset_mode: script_only
+  execute_for_answer: true
+  execution_timeout_seconds: 60
+  require_approval_for_shell_execution: false
+  max_repair_attempts: 2
+
+tools:
+  enabled:
+    - list_folder_structure
+    - read_wfdb_dataset
+    - read_dataset_website
+    - generate_python_artifact
+    - inspect_dataset
+    - retrieve_corpus
+    - calculate
+
+safety:
+  allow_web_fetch: false
+  allow_action_tools: true

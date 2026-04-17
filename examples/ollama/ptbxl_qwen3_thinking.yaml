@@ -1,0 +1,66 @@
+system_name: CardioMAS-Qwen3-Thinking
+output_dir: runtime_output/react-mode/ptbxl_qwen3_thinking
+
+sources:
+  - kind: dataset_dir
+    path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
+    label: ptbxl
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl/1.0.3/
+    label: ptbxl-physionet-page
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl-plus/1.0.1/
+    label: ptbxl-plus-physionet-page
+
+scripts_dir: runtime_output/scripts/ptbxl-qwen3-thinking
+
+retrieval:
+  mode: bm25
+  top_k: 5
+  chunk_size: 700
+
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: qwen3:30b-a3b-thinking-2507-q4_K_M
+  temperature: 0.6        # recommended for Qwen3 thinking models
+  max_tokens: 8000        # thinking models generate longer internal reasoning
+  code_max_tokens: 8000
+  code_temperature: 0.6
+  timeout_seconds: 300.0  # thinking models can take longer to respond
+
+agent:
+  mode: react
+  max_iterations: 10
+  query_decomposition: false
+  self_reflection: true
+  retrieval_grading: true
+  memory_mode: persistent
+  persistent_memory_max: 200
+  upfront_planning: true
+  step_reflection: true
+  scratchpad: true
+  tool_verification: true
+
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  dataset_mode: script_only
+  execute_for_answer: true
+  execution_timeout_seconds: 60
+  require_approval_for_shell_execution: false
+  max_repair_attempts: 2
+
+tools:
+  enabled:
+    - list_folder_structure
+    - read_wfdb_dataset
+    - read_dataset_website
+    - generate_python_artifact
+    - inspect_dataset
+    - retrieve_corpus
+    - calculate
+
+safety:
+  allow_web_fetch: false
+  allow_action_tools: true
