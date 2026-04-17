@@ -47,6 +47,8 @@ class ToolPolicyConfig(BaseModel):
     enabled: list[str] = Field(
         default_factory=lambda: [
             "retrieve_corpus",
+            "list_folder_structure",
+            "read_wfdb_dataset",
             "inspect_dataset",
             "calculate",
             "fetch_webpage",

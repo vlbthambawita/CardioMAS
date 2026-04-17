@@ -41,6 +41,8 @@ autonomy:
 
 tools:
   enabled:
+    - list_folder_structure
+    - read_wfdb_dataset
     - generate_python_artifact
     - inspect_dataset
     - retrieve_corpus

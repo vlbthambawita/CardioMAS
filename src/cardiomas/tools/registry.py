@@ -6,10 +6,11 @@ from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.base import EmbeddingClient
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.tools import ToolResult, ToolSpec
-from cardiomas.tools.dataset_tools import inspect_dataset
+from cardiomas.tools.dataset_tools import inspect_dataset, list_folder_structure
 from cardiomas.tools.research_tools import fetch_webpage
 from cardiomas.tools.retrieval_tools import retrieve_corpus
 from cardiomas.tools.utility_tools import calculate_expression
+from cardiomas.tools.wfdb_tools import read_wfdb_dataset
 
 
 ToolHandler = Callable[..., ToolResult]
@@ -65,6 +66,41 @@ def build_registry(
                 embedding_client=embedding_client,
                 top_k=top_k,
             ),
+        )
+
+    if "list_folder_structure" in config.tools.enabled:
+        registry.register(
+            ToolSpec(
+                name="list_folder_structure",
+                description=(
+                    "Return a tree-formatted listing of every file and sub-directory inside "
+                    "a given dataset path, including file sizes and CSV/TSV column headers. "
+                    "Use this first when you need to understand which files are available "
+                    "and how the data is organised before deciding what to read or compute."
+                ),
+                category="dataset",
+            ),
+            list_folder_structure,
+        )
+
+    if "read_wfdb_dataset" in config.tools.enabled:
+        registry.register(
+            ToolSpec(
+                name="read_wfdb_dataset",
+                description=(
+                    "Inspect a PhysioNet WFDB-format ECG dataset directory and return "
+                    "structured metadata without loading raw signal data. Scans for WFDB "
+                    "header files (.hea), parses signal names (leads), sampling frequencies, "
+                    "recording durations, ADC units, and detects annotation file types "
+                    "(.atr, .ecg, .ann, etc.) and signal file formats (.dat, .edf, .mat). "
+                    "Use this tool when the dataset contains .hea files and you need to know "
+                    "which ECG leads are recorded, at what sampling rate, how long each "
+                    "recording is, or what annotations are available before writing analysis "
+                    "code. Works with or without the wfdb Python library installed."
+                ),
+                category="dataset",
+            ),
+            read_wfdb_dataset,
         )
 
     if "inspect_dataset" in config.tools.enabled:
