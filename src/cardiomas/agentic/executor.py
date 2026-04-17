@@ -34,7 +34,13 @@ def execute_plan(
             warnings.append(warning)
             calls.append(ToolCallRecord(tool_name=spec.name, args=step.args, ok=False, error="approval required"))
             continue
-        result = registry.execute(step.tool_name, **step.args)
+        try:
+            result = registry.execute(step.tool_name, **step.args)
+        except Exception as exc:
+            warning = f"{spec.name}: execution failed: {exc}"
+            warnings.append(warning)
+            calls.append(ToolCallRecord(tool_name=step.tool_name, args=step.args, ok=False, error=str(exc)))
+            continue
         call = ToolCallRecord(
             tool_name=step.tool_name,
             args=step.args,

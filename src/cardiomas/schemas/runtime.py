@@ -20,13 +20,26 @@ class AgentDecision(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class LLMTrace(BaseModel):
+    stage: str
+    provider: str = ""
+    model: str = ""
+    ok: bool = True
+    prompt_preview: str = ""
+    response_preview: str = ""
+    error: str = ""
+
+
 class CorpusManifest(BaseModel):
     built_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     document_count: int = 0
     chunk_count: int = 0
+    embedded_chunk_count: int = 0
+    embedding_model: str = ""
     output_dir: str
     corpus_path: str
     source_ids: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class QueryResult(BaseModel):
@@ -38,3 +51,4 @@ class QueryResult(BaseModel):
     evidence: list[EvidenceChunk] = Field(default_factory=list)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    llm_traces: list[LLMTrace] = Field(default_factory=list)

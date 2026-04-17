@@ -1,0 +1,31 @@
+system_name: CardioMAS
+output_dir: ../../runtime_output/ollama-local
+sources:
+  - kind: dataset_dir
+    path: ../agentic_rag_demo/data
+    label: demo-dataset
+  - kind: local_file
+    path: ../agentic_rag_demo/notes.md
+    label: demo-notes
+retrieval:
+  mode: hybrid
+  top_k: 5
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  planner_mode: ollama
+  model: llama3.2
+  temperature: 0.1
+  max_tokens: 800
+embeddings:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: embeddinggemma
+  batch_size: 16
+tools:
+  enabled:
+    - retrieve_corpus
+    - inspect_dataset
+    - calculate
+safety:
+  allow_web_fetch: false

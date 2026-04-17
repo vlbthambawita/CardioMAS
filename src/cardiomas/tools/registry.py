@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from cardiomas.inference.base import EmbeddingClient
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.tools import ToolResult, ToolSpec
 from cardiomas.tools.dataset_tools import inspect_dataset
@@ -31,7 +32,11 @@ class ToolRegistry:
         return self._handlers[name](**kwargs)
 
 
-def build_registry(config: RuntimeConfig, chunks) -> ToolRegistry:
+def build_registry(
+    config: RuntimeConfig,
+    chunks,
+    embedding_client: EmbeddingClient | None = None,
+) -> ToolRegistry:
     registry = ToolRegistry()
 
     if "retrieve_corpus" in config.tools.enabled:
@@ -41,7 +46,13 @@ def build_registry(config: RuntimeConfig, chunks) -> ToolRegistry:
                 description="Retrieve ranked evidence chunks from the built local corpus.",
                 category="retrieval",
             ),
-            lambda query, top_k=None: retrieve_corpus(chunks=chunks, query=query, config=config, top_k=top_k),
+            lambda query, top_k=None: retrieve_corpus(
+                chunks=chunks,
+                query=query,
+                config=config,
+                embedding_client=embedding_client,
+                top_k=top_k,
+            ),
         )
 
     if "inspect_dataset" in config.tools.enabled:

@@ -31,6 +31,8 @@ class EvidenceChunk(BaseModel):
     content: str
     uri: str
     metadata: dict[str, str] = Field(default_factory=dict)
+    embedding: list[float] = Field(default_factory=list)
+    embedding_model: str = ""
     score: float = 0.0
 
     def citation(self) -> Citation:

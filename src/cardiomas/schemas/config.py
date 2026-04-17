@@ -40,6 +40,7 @@ class RetrievalConfig(BaseModel):
     chunk_size: int = 700
     chunk_overlap: int = 120
     min_score: float = 0.0
+    rrf_k: int = 60
 
 
 class ToolPolicyConfig(BaseModel):
@@ -69,6 +70,44 @@ class ResponseConfig(BaseModel):
     max_citations: int = 5
 
 
+class LLMConfig(BaseModel):
+    provider: Literal["ollama"] = "ollama"
+    base_url: str = "http://localhost:11434"
+    planner_mode: Literal["heuristic", "ollama"] = "heuristic"
+    model: str = ""
+    planner_model: str = ""
+    responder_model: str = ""
+    temperature: float = 0.1
+    max_tokens: int = 800
+    timeout_seconds: float = 60.0
+    keep_alive: str = "5m"
+
+    @property
+    def resolved_planner_model(self) -> str:
+        return self.planner_model or self.model
+
+    @property
+    def resolved_responder_model(self) -> str:
+        return self.responder_model or self.model
+
+    @property
+    def planner_enabled(self) -> bool:
+        return self.planner_mode == "ollama" and bool(self.resolved_planner_model)
+
+    @property
+    def responder_enabled(self) -> bool:
+        return bool(self.resolved_responder_model)
+
+
+class EmbeddingConfig(BaseModel):
+    provider: Literal["ollama"] = "ollama"
+    base_url: str = "http://localhost:11434"
+    model: str
+    batch_size: int = 32
+    timeout_seconds: float = 60.0
+    keep_alive: str = "5m"
+
+
 class RuntimeConfig(BaseModel):
     system_name: str = "CardioMAS"
     output_dir: str = "runtime_output"
@@ -78,6 +117,8 @@ class RuntimeConfig(BaseModel):
     memory: MemoryPolicy = Field(default_factory=MemoryPolicy)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     response: ResponseConfig = Field(default_factory=ResponseConfig)
+    llm: LLMConfig | None = None
+    embeddings: EmbeddingConfig | None = None
 
     @property
     def corpus_path(self) -> Path:
@@ -86,6 +127,18 @@ class RuntimeConfig(BaseModel):
     @property
     def manifest_path(self) -> Path:
         return Path(self.output_dir) / "corpus_manifest.json"
+
+    @property
+    def planner_uses_ollama(self) -> bool:
+        return bool(self.llm and self.llm.planner_enabled)
+
+    @property
+    def responder_uses_ollama(self) -> bool:
+        return bool(self.llm and self.llm.responder_enabled)
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        return self.embeddings is not None
 
     @classmethod
     def from_file(cls, path: str) -> "RuntimeConfig":

@@ -71,6 +71,16 @@ def query(
             table.add_row(citation["source_label"], citation["locator"], citation["source_type"])
         console.print(table)
 
+    if result["llm_traces"]:
+        table = Table(title="LLM Traces")
+        table.add_column("Stage", style="cyan")
+        table.add_column("Model")
+        table.add_column("OK")
+        table.add_column("Error")
+        for trace in result["llm_traces"]:
+            table.add_row(trace["stage"], trace["model"], str(trace["ok"]), trace["error"])
+        console.print(table)
+
     if result["warnings"]:
         console.print("[yellow]Warnings[/yellow]")
         for warning in result["warnings"]:
@@ -106,6 +116,32 @@ def show_config(
     """Print the resolved runtime config."""
     config = RuntimeConfig.from_file(config_path)
     rprint(json.dumps(config.model_dump(mode="json"), indent=2, default=str))
+
+
+@app.command("check-ollama")
+def check_ollama(
+    config_path: Annotated[str, typer.Option("--config", "-c", help="Path to YAML or JSON runtime config")],
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Check Ollama connectivity for the configured LLM and embedding clients."""
+    api = _load_api(config_path)
+    status = api.check_ollama()
+    if output_json:
+        rprint(json.dumps(status, indent=2, default=str))
+        return
+
+    table = Table(title="Ollama Status")
+    table.add_column("Client", style="cyan")
+    table.add_column("Configured")
+    table.add_column("OK")
+    table.add_column("Models")
+    table.add_column("Error")
+    for name in ["llm", "embeddings"]:
+        item = status.get(name, {})
+        configured = item.get("configured", True)
+        models = ", ".join(model["name"] for model in item.get("models", [])) if item.get("models") else ""
+        table.add_row(name, str(configured), str(item.get("ok", False)), models, item.get("error", ""))
+    console.print(table)
 
 
 @app.command()

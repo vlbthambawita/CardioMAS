@@ -43,3 +43,35 @@ def test_build_corpus_and_query_cli(tmp_path):
     assert "AFIB" in query_result.output or "NORM" in query_result.output
     assert tools_result.exit_code == 0
     assert "retrieve_corpus" in tools_result.output
+
+
+def test_check_ollama_cli(tmp_path, monkeypatch):
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "output_dir: output",
+                "llm:",
+                "  provider: ollama",
+                "  model: llama3.2",
+                "embeddings:",
+                "  provider: ollama",
+                "  model: embeddinggemma",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "cardiomas.cli.main.CardioMAS.check_ollama",
+        lambda self: {
+            "llm": {"configured": True, "ok": True, "models": [{"name": "llama3.2"}], "error": ""},
+            "embeddings": {"configured": True, "ok": True, "models": [{"name": "embeddinggemma"}], "error": ""},
+        },
+    )
+
+    result = runner.invoke(app, ["check-ollama", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "llama3.2" in result.output
+    assert "embeddinggemma" in result.output

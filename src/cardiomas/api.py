@@ -26,3 +26,6 @@ class CardioMAS:
 
     def inspect_tools(self) -> list[dict[str, Any]]:
         return [spec.model_dump(mode="json") for spec in self.runtime.inspect_tools()]
+
+    def check_ollama(self) -> dict[str, Any]:
+        return self.runtime.check_ollama()

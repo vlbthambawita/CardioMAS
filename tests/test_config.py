@@ -45,3 +45,34 @@ def test_runtime_config_reports_yaml_syntax_location(tmp_path):
 
     with pytest.raises(ValueError, match=r"Invalid YAML .*line 2, column 13"):
         RuntimeConfig.from_file(str(config_path))
+
+
+def test_runtime_config_parses_ollama_sections(tmp_path):
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "output_dir: output",
+                "llm:",
+                "  provider: ollama",
+                "  base_url: http://localhost:11434",
+                "  planner_mode: ollama",
+                "  model: llama3.2",
+                "embeddings:",
+                "  provider: ollama",
+                "  base_url: http://localhost:11434",
+                "  model: embeddinggemma",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = RuntimeConfig.from_file(str(config_path))
+
+    assert config.planner_uses_ollama is True
+    assert config.responder_uses_ollama is True
+    assert config.embeddings_enabled is True
+    assert config.llm is not None
+    assert config.llm.resolved_planner_model == "llama3.2"
+    assert config.embeddings is not None
+    assert config.embeddings.model == "embeddinggemma"
