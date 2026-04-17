@@ -49,6 +49,7 @@ class ToolPolicyConfig(BaseModel):
             "retrieve_corpus",
             "list_folder_structure",
             "read_wfdb_dataset",
+            "read_dataset_website",
             "inspect_dataset",
             "calculate",
             "fetch_webpage",

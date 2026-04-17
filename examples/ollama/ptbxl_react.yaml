@@ -4,6 +4,12 @@ sources:
   - kind: dataset_dir
     path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
     label: ptbxl
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl/1.0.3/
+    label: ptbxl-physionet-page
+  - kind: web_page
+    url: https://physionet.org/content/ptb-xl-plus/1.0.1/
+    label: ptbxl-plus-physionet-page
 
 scripts_dir: runtime_output/scripts/ptbxl-react
 
@@ -43,6 +49,7 @@ tools:
   enabled:
     - list_folder_structure
     - read_wfdb_dataset
+    - read_dataset_website
     - generate_python_artifact
     - inspect_dataset
     - retrieve_corpus

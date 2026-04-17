@@ -10,6 +10,7 @@ from cardiomas.tools.dataset_tools import inspect_dataset, list_folder_structure
 from cardiomas.tools.research_tools import fetch_webpage
 from cardiomas.tools.retrieval_tools import retrieve_corpus
 from cardiomas.tools.utility_tools import calculate_expression
+from cardiomas.tools.web_dataset_tools import _configured_web_urls, read_dataset_website
 from cardiomas.tools.wfdb_tools import read_wfdb_dataset
 
 
@@ -121,6 +122,37 @@ def build_registry(
                 category="utility",
             ),
             calculate_expression,
+        )
+
+    if "read_dataset_website" in config.tools.enabled:
+        web_sources = _configured_web_urls(config)
+        if web_sources:
+            url_hints = "; ".join(f"{label} → {url}" for label, url in web_sources)
+            configured_note = (
+                f" The following dataset websites are already configured in this "
+                f"session and are the primary targets for this tool: {url_hints}."
+            )
+        else:
+            configured_note = (
+                " No dataset website URLs are configured yet — the user can add "
+                "them under 'sources' with 'kind: web_page' in the YAML config."
+            )
+        registry.register(
+            ToolSpec(
+                name="read_dataset_website",
+                description=(
+                    "Fetch a dataset documentation website (PhysioNet, HuggingFace, "
+                    "Zenodo, Kaggle, or any research data portal) and extract structured "
+                    "metadata: description, file listing, signal/variable names, sampling "
+                    "frequency, record count, annotation types, license, DOI, and download "
+                    "links. Use this before writing analysis code when you need to understand "
+                    "what data the dataset contains, how it is organised, or what the "
+                    "columns/signals represent. Takes a single 'url' argument."
+                    + configured_note
+                ),
+                category="research",
+            ),
+            lambda url: read_dataset_website(url=url, config=config),
         )
 
     if "fetch_webpage" in config.tools.enabled:
