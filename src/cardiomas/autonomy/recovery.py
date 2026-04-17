@@ -277,9 +277,19 @@ class AutonomousToolManager:
 
                 result = self._run_python_artifact(package, payload, session_id, attempt)
                 if result.ok:
-                    trace.retry_succeeded = True
+                    artifact_stdout = (result.data or {}).get("stdout", "")
+                    if result.summary.strip() or artifact_stdout.strip():
+                        trace.retry_succeeded = True
+                        self._traces.append(trace)
+                        return result
+                    trace.ok = False
+                    trace.error = (
+                        "Artifact ran without errors but produced no output. "
+                        "Read the actual data files and print computed results (e.g. unique patient count)."
+                    )
+                    last_error = trace.error
                     self._traces.append(trace)
-                    return result
+                    continue
 
                 trace.ok = False
                 trace.error = result.error or "Generated Python artifact returned ok=False."

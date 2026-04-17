@@ -211,7 +211,7 @@ def _sanitize_decision(
         elif step.tool_name == "inspect_dataset":
             if not dataset_path:
                 continue
-            args["dataset_path"] = dataset_path
+            args = {"dataset_path": dataset_path}
         elif step.tool_name == "calculate":
             args["expression"] = str(args.get("expression") or expression)
             if not args["expression"]:
