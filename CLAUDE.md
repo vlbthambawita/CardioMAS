@@ -4,129 +4,155 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CardioMAS is a locally-runnable multi-agent system that analyzes ECG datasets, generates reproducible train/val/test splits, and publishes split manifests (record IDs only — no raw data) to `vlbthambawita/ECGBench` on HuggingFace. It is distributed as the `cardiomas` PyPI package.
+CardioMAS is an **Agentic RAG runtime** for grounded question-answering over ECG/medical datasets. Given a YAML/JSON config that declares knowledge sources, it builds a local corpus, then answers natural-language queries using a plan → execute → aggregate → respond pipeline backed by a local Ollama LLM. Distributed as the `cardiomas` PyPI package.
 
 **Key links:** GitHub: `vlbthambawita/CardioMAS` | HF Dataset: `vlbthambawita/ECGBench` | PyPI: `cardiomas`
 
 ## Prerequisites & Setup
 
 ```bash
-# Install in editable mode with dev tools
+# Install in editable mode with dev tools (uses conda env vLLM)
+conda activate vLLM
 pip install -e ".[dev]"
 
-# Ollama must be running with a model pulled (default: gemma4:e2b)
-ollama pull gemma4:e2b && ollama serve
+# Ollama must be running with a model pulled
+ollama pull gemma3:4b && ollama serve
 
-# Copy and fill in tokens
+# Copy and fill in tokens (HF_TOKEN, GITHUB_TOKEN optional — only for publishing)
 cp .env.example .env
 ```
 
 ## Common Commands
 
 ```bash
-# Run the CLI
-cardiomas analyze https://physionet.org/content/ptb-xl/1.0.3/
-cardiomas analyze /local/path --local-path /local/path --dry-run
-cardiomas status ptb-xl
-cardiomas list
-cardiomas verify ptb-xl
-cardiomas version
+# CLI — all commands require --config pointing to a YAML/JSON RuntimeConfig
+cardiomas build-corpus --config examples/agentic_rag_demo/runtime.yaml
+cardiomas build-corpus --config runtime.yaml --force        # force rebuild
+cardiomas query "What is the class distribution?" --config runtime.yaml
+cardiomas query "..." --config runtime.yaml --live          # stream events
+cardiomas query "..." --config runtime.yaml --json          # machine-readable
+cardiomas inspect-tools --config runtime.yaml               # list enabled tools
+cardiomas check-ollama --config runtime.yaml                # health check
 
 # Tests
-pytest tests/                          # all 26 tests
-pytest tests/test_splitters.py -v      # splitter unit tests
-pytest tests/test_security.py -v       # security/PII tests
-pytest tests/test_cli.py -v            # CLI integration tests
+pytest tests/                                       # full suite
+pytest tests/test_runtime.py -v                     # runtime unit tests
+pytest tests/test_autonomy.py -v                    # autonomy/recovery tests
+pytest tests/test_cli_fresh.py -v                   # CLI integration tests
+pytest tests/test_corpus.py::test_build_bm25 -v     # single test
 
 # Lint / format
 ruff check src/ tests/
 ruff format src/ tests/
 
-# Build package (version comes from git tag via setuptools-scm)
+# Build package (version from git tag via setuptools-scm)
 python -m build
-
-# Publish a release
-git tag v0.1.0 && git push origin v0.1.0   # triggers GitHub Actions → PyPI
+git tag v0.2.0 && git push origin v0.2.0   # triggers GitHub Actions → PyPI
 ```
 
 ## Architecture
 
-The package lives entirely under `src/cardiomas/`. The old top-level `agents/`, `graph/`, `main.py`, `orchestrator.py` have been removed.
+All source lives under `src/cardiomas/`. Entry point is `AgenticRuntime` in `agentic/runtime.py`.
 
-### LangGraph Pipeline (`graph/workflow.py`)
+### Query Pipeline (`agentic/`)
 
-`run_pipeline(source, options)` builds a `StateGraph(dict)` and runs it. The seven nodes are LangGraph-wrapped calls to agent functions in `agents/`. The shared state carrier is `GraphState` (Pydantic, serialized to/from dict for LangGraph).
-
-**Node sequence:**
+`AgenticRuntime.query_stream(query)` runs four stages in sequence, yielding `AgentEvent` objects:
 
 ```
-orchestrator → [HF cache hit?] → return_existing → END
-                   ↓ (no hit)
-             discovery → paper → analysis → splitter → security
-                                                           ↓
-                                              [audit passed?] → publisher → END
-                                              [audit failed] → end_with_error → END
-                                              [dry-run]      → end_dry_run → END
+build_corpus → planner → executor → aggregator → responder → QueryResult
 ```
 
-### Agents (`agents/`)
+- **planner** (`planner.py`) — given the query + tool specs, selects which tools to call and with what args (heuristic or Ollama-based)
+- **executor** (`executor.py`) — calls selected tools, captures results and errors; yields per-tool events
+- **aggregator** (`aggregator.py`) — merges tool results into ranked evidence
+- **responder** (`responder.py`) — generates a grounded answer with citations from the aggregated evidence
 
-Each agent function takes and returns `GraphState`. They use `agents/base.py:run_agent()` which loads an `.md` skill file from `skills/` as the LLM system prompt, then invokes the LLM.
+The non-streaming `.query()` method drains the generator and returns the final `QueryResult`.
 
-| Agent | Key responsibility |
-|---|---|
-| `orchestrator` | Check HF cache; short-circuit if already published |
-| `discovery` | Identify dataset from URL/path; populate `DatasetInfo` |
-| `paper` | Find & parse the dataset paper; extract split methodology |
-| `analysis` | Scan files, parse CSV metadata, compute statistics |
-| `splitter` | Generate deterministic splits; build `SplitManifest` |
-| `security` | PII scan, raw-data check, patient-leakage check |
-| `publisher` | Push to `vlbthambawita/ECGBench`; update GitHub README |
+### Configuration System (`schemas/config.py`)
 
-### Reproducibility Guarantee
+All runtime behaviour is driven by a `RuntimeConfig` loaded from YAML or JSON:
 
-`splitters/strategies.py:deterministic_split()` sorts record IDs, computes SHA-256(sorted_ids + seed + strategy) as the RNG seed, then shuffles+slices. Same inputs always yield identical splits.
+```yaml
+system_name: MySystem
+output_dir: output          # corpus + manifest written here
+sources:
+  - kind: dataset_dir       # also: local_dir, local_file, web_page, pdf
+    path: data/
+    label: my-dataset
+retrieval:
+  mode: hybrid              # bm25 | dense | hybrid
+  top_k: 5
+  chunk_size: 700
+tools:
+  enabled: [retrieve_corpus, inspect_dataset, calculate, fetch_webpage]
+safety:
+  allow_web_fetch: false
+  allow_action_tools: false
+autonomy:
+  enable_code_agents: false
+  allow_tool_codegen: false
+  max_repair_attempts: 2
+```
 
-### Schemas (`schemas/`)
+### Knowledge & Retrieval (`knowledge/`, `retrieval/`)
 
-All state is Pydantic v2:
-- `GraphState` — full pipeline state (dataset_info, proposed_splits, security_audit, etc.)
-- `DatasetInfo` — dataset metadata with `DatasetSource` enum
-- `SplitManifest` — split output + `ReproducibilityConfig`
-- `SecurityAudit` — audit results with blocking issues
+`build_corpus()` loads all declared sources via `knowledge/loaders.py`, chunks them (`knowledge/chunking.py`), and persists the corpus. Retrieval supports three modes:
+- `bm25` — keyword retrieval (`retrieval/bm25.py`)
+- `dense` — embedding-based (`retrieval/dense.py`) via Ollama embeddings
+- `hybrid` — Reciprocal Rank Fusion of BM25 + dense (`retrieval/hybrid.py`)
 
 ### Tools (`tools/`)
 
-LangChain `@tool`-decorated functions called directly by agents. Five modules: `data_tools`, `research_tools`, `split_tools`, `publishing_tools`, `security_tools`. All tools return dicts (never raise — errors land in `"error"` key).
+Tools are registered at runtime via `tools/registry.py:build_registry()`. Built-in tools:
 
-### Dataset Registry (`datasets/registry.yaml`)
+| Tool name | Module | Purpose |
+|---|---|---|
+| `retrieve_corpus` | `retrieval_tools.py` | Ranked chunk retrieval |
+| `inspect_dataset` | `dataset_tools.py` | Dataset file structure/stats |
+| `calculate` | `utility_tools.py` | Safe arithmetic |
+| `fetch_webpage` | `research_tools.py` | Web fetch (requires `allow_web_fetch: true`) |
 
-YAML catalog of 6 known ECG datasets (PTB-XL, MIMIC-IV-ECG, CPSC-2018, Georgia, Chapman-Shaoxing, CODE-15). The `DatasetRegistry` singleton loads it at import time. New datasets can be registered programmatically via `get_registry().register(DatasetInfo(...))`.
+### Autonomy Layer (`autonomy/`)
 
-### LLM (`llm_factory.py`)
+Optional code-generation and repair loop, enabled via `autonomy` config keys:
+- `recovery.py` — `AutonomousToolManager`: wraps tool execution with retry/repair traces
+- `verifier.py` — validates generated code/scripts before execution
+- `workspace.py` — isolated artifact workspace for generated files
+- `policy.py` — access control policies for autonomy actions
 
-`get_llm(prefer_cloud=False)` returns a LangChain `BaseChatModel`. Default: `ChatOllama` (local). Optional cloud fallback via `CLOUD_LLM_PROVIDER=openai|anthropic` in `.env`. Ollama health-check runs on every call to `get_local_llm()`.
+Code generation lives in `coding/tool_builder.py` (dynamic tools) and `coding/script_builder.py` (shell scripts).
 
-### CLI (`cli/main.py`) and Python API (`api.py`)
+### Inference (`inference/`)
 
-CLI uses `typer`. All commands support `--json` for machine-readable output. The `CardioMAS` class in `api.py` is the public Python library API (`from cardiomas import CardioMAS`).
+`inference/ollama.py` provides `OllamaChatClient` and `OllamaEmbeddingClient`, both with `.health_check()`. `llm_factory` is replaced — use `build_chat_client(config.llm)` and `build_embedding_client(config.embeddings)` directly.
 
-## Publishing a New Version
+### Schemas (`schemas/`)
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-# GitHub Actions (.github/workflows/publish.yml) builds and publishes to PyPI via
-# OIDC trusted publishing (no PYPI_API_TOKEN needed after one-time PyPI setup).
+Pydantic v2 throughout:
+- `RuntimeConfig` — full config tree
+- `AgentEvent` — streaming event (type, stage, message, data)
+- `QueryResult` — final answer + citations + tool results
+- `CorpusManifest` — corpus metadata written alongside the corpus
+
+### Python API (`api.py`)
+
+```python
+from cardiomas import CardioMAS
+
+api = CardioMAS(config_path="runtime.yaml")
+api.build_corpus(force_rebuild=False)
+result = api.query("What leads are present?")
+for event in api.query_stream("..."):   # AgentEvent generator
+    print(event)
+api.inspect_tools()
+api.check_ollama()
 ```
 
-## Environment Variables
+### Format Readers (`mappers/format_readers/`)
 
-See `.env.example` for the full list. Key ones:
+Readers for ECG-specific formats: WFDB, CSV, EDF, HDF5, NumPy — used by `inspect_dataset` tool.
 
-| Variable | Purpose |
-|---|---|
-| `OLLAMA_MODEL` | Local model name (default `gemma4:e2b`) |
-| `HF_TOKEN` | Required for pushing to `vlbthambawita/ECGBench` |
-| `GITHUB_TOKEN` | Required for updating `vlbthambawita/CardioMAS` README |
-| `CARDIOMAS_SEED` | Global reproducibility seed (default `42`) |
+## Safety
+
+`safety/policy.py` + `safety/permissions.py` + `safety/approvals.py` govern what tools can do. Web fetch and action tools are **off by default** — enable via `safety.allow_web_fetch: true` / `safety.allow_action_tools: true` in the config.

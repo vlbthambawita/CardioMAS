@@ -222,15 +222,21 @@ def _sanitize_decision(
                 continue
             args["url"] = url
         elif step.tool_name == "generate_python_artifact":
-            args["dataset_path"] = dataset_path
-            args["task"] = query
-            args["target_path"] = str(args.get("target_path") or _extract_local_path(query))
+            args = {
+                "task": query,
+                "dataset_path": dataset_path,
+                "target_path": str(step.args.get("target_path") or _extract_local_path(query)),
+                "artifact_name": str(step.args.get("artifact_name") or ""),
+            }
         elif step.tool_name == "generate_shell_artifact":
             if not dataset_path:
                 continue
-            args["dataset_path"] = dataset_path
-            args["task"] = query
-            args["execute"] = bool(args.get("execute")) and _asks_to_run_script(query.lower())
+            args = {
+                "task": query,
+                "dataset_path": dataset_path,
+                "artifact_name": str(step.args.get("artifact_name") or ""),
+                "execute": bool(step.args.get("execute")) and _asks_to_run_script(query.lower()),
+            }
         steps.append(
             PlanStep(
                 tool_name=step.tool_name,
