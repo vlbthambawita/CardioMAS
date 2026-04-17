@@ -12,6 +12,7 @@ def aggregate_results(results: list[ToolResult]) -> tuple[list[EvidenceChunk], d
         "web_pages": [],
         "generated_python_artifacts": [],
         "generated_shell_artifacts": [],
+        "standalone_scripts": [],
     }
 
     for result in results:
@@ -27,7 +28,10 @@ def aggregate_results(results: list[ToolResult]) -> tuple[list[EvidenceChunk], d
         elif result.tool_name == "fetch_webpage" and result.ok:
             aggregate["web_pages"].append(result.data)
         elif result.tool_name == "generate_python_artifact" and result.ok:
-            aggregate["generated_python_artifacts"].append(result.data)
+            if result.data.get("is_standalone"):
+                aggregate["standalone_scripts"].append(result.data)
+            else:
+                aggregate["generated_python_artifacts"].append(result.data)
         elif result.tool_name == "generate_shell_artifact" and result.ok:
             aggregate["generated_shell_artifacts"].append(result.data)
 

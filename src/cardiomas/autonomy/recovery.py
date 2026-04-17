@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import io
@@ -9,11 +10,16 @@ import subprocess
 from typing import Any
 from uuid import uuid4
 
-from cardiomas.autonomy.policy import script_codegen_allowed, tool_codegen_allowed
+from cardiomas.autonomy.policy import script_codegen_allowed, tool_codegen_allowed, verify_python_ast
 from cardiomas.autonomy.verifier import verify_generated_script, verify_generated_tool
 from cardiomas.autonomy.workspace import AutonomyWorkspace
 from cardiomas.coding.script_builder import build_shell_script
-from cardiomas.coding.tool_builder import GeneratedArtifactPackage, build_generated_tool_package
+from cardiomas.coding.tool_builder import (
+    GeneratedArtifactPackage,
+    StandaloneScript,
+    build_generated_tool_package,
+    build_standalone_script,
+)
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.evidence import EvidenceChunk
 from cardiomas.schemas.runtime import RepairTrace
@@ -80,6 +86,8 @@ class AutonomousToolManager:
         target_path: str = "",
         artifact_name: str = "",
     ) -> ToolResult:
+        if self.config.autonomy.dataset_mode == "script_only":
+            return self._write_standalone_script(task, dataset_path)
         payload = {
             "task": task,
             "dataset_path": dataset_path,
@@ -87,6 +95,91 @@ class AutonomousToolManager:
             "artifact_name": artifact_name,
         }
         return self._execute_generated_python_artifact(payload)
+
+    def _write_standalone_script(self, task: str, dataset_path: str) -> ToolResult:
+        max_attempts = self.config.autonomy.max_repair_attempts + 1
+        last_error = ""
+        for attempt in range(1, max_attempts + 1):
+            trace = RepairTrace(
+                tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+                action="write_script" if attempt == 1 else "repair_script",
+                attempt=attempt,
+                workspace_path=str(self.workspace.scripts_output_dir()),
+            )
+            try:
+                script = build_standalone_script(task, dataset_path, self.config, last_error=last_error)
+                errors = _verify_standalone_script(script.code, self.config)
+                trace.verification = errors or ["syntax OK"]
+                if errors:
+                    trace.ok = False
+                    trace.error = "; ".join(errors)
+                    last_error = trace.error
+                    self._traces.append(trace)
+                    continue
+
+                script_path = self.workspace.write_standalone_script(script)
+                trace.files_written = [str(script_path)]
+
+                # Phase 1: write only — no execution
+                if not self.config.autonomy.execute_for_answer:
+                    trace.retry_succeeded = True
+                    self._traces.append(trace)
+                    return _standalone_write_result(script, script_path, executed=False)
+
+                # Phase 2: execute and feed output to responder
+                if self.config.autonomy.require_approval_for_shell_execution:
+                    trace.retry_succeeded = True
+                    self._traces.append(trace)
+                    return _standalone_write_result(
+                        script, script_path, executed=False,
+                        execution_error="execution skipped: require_approval_for_shell_execution=True",
+                    )
+
+                script.output_dir.mkdir(parents=True, exist_ok=True)
+                completed = subprocess.run(
+                    ["python", str(script_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.autonomy.execution_timeout_seconds,
+                    cwd=str(script.output_dir.parent),
+                    check=False,
+                )
+                stdout = completed.stdout.strip()
+                stderr = completed.stderr.strip()
+
+                stdout_file = script.output_dir / f"stdout_{script.script_name.replace('.py', '')}.txt"
+                stdout_file.write_text(stdout, encoding="utf-8")
+
+                if completed.returncode == 0 and stdout:
+                    trace.retry_succeeded = True
+                    self._traces.append(trace)
+                    return _standalone_execute_result(script, script_path, stdout)
+
+                error_msg = stderr or f"Script exited with code {completed.returncode}."
+                if not stdout:
+                    error_msg = "Script produced no output. " + error_msg
+                trace.ok = False
+                trace.error = error_msg
+                last_error = error_msg
+                self._traces.append(trace)
+
+            except subprocess.TimeoutExpired:
+                trace.ok = False
+                trace.error = f"Timed out after {self.config.autonomy.execution_timeout_seconds}s."
+                last_error = trace.error
+                self._traces.append(trace)
+            except Exception as exc:
+                trace.ok = False
+                trace.error = str(exc)
+                last_error = str(exc)
+                self._traces.append(trace)
+
+        return ToolResult(
+            tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+            ok=False,
+            summary="",
+            error=f"Standalone script generation failed after {max_attempts} attempt(s): {last_error}",
+        )
 
     def generate_shell_artifact(
         self,
@@ -455,6 +548,101 @@ def _artifact_slug(task: str, dataset_path: str, prefix: str) -> str:
     base = _slug(task or prefix)
     digest = hashlib.sha1(f"{prefix}|{dataset_path}|{task}".encode("utf-8")).hexdigest()[:8]
     return f"{prefix}-{base[:32] or 'artifact'}-{digest}"
+
+
+def _verify_standalone_script(code: str, config: RuntimeConfig) -> list[str]:
+    errors: list[str] = []
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        return [f"Syntax error in generated script: {exc}"]
+    if "def main()" not in code:
+        errors.append("Missing main() function in generated script.")
+    if '__name__ == "__main__"' not in code and "__name__ == '__main__'" not in code:
+        errors.append("Missing if __name__ == '__main__' guard.")
+    errors.extend(verify_python_ast(code, config))
+    return errors
+
+
+def _standalone_write_result(
+    script: StandaloneScript,
+    script_path: Path,
+    executed: bool,
+    execution_error: str = "",
+) -> ToolResult:
+    evidence = [
+        EvidenceChunk(
+            chunk_id=f"standalone-script:{script.script_name}",
+            source_id="autonomy",
+            source_label="generated-python-artifact",
+            source_type="generated_artifact",
+            title=script.script_name,
+            content=f"Script written to: {script_path}\n{script.description}",
+            uri=str(script_path),
+            metadata={"chunk_label": script.script_name, "script_name": script.script_name},
+            score=1.0,
+        )
+    ]
+    return ToolResult(
+        tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+        ok=True,
+        summary=f"Script written to {script_path}",
+        data={
+            "script_path": str(script_path),
+            "script_name": script.script_name,
+            "description": script.description,
+            "dataset_path": "",
+            "output_dir": str(script.output_dir),
+            "is_standalone": True,
+            "executed": executed,
+            "execution_stdout": "",
+            "execution_error": execution_error,
+        },
+        evidence=evidence,
+    )
+
+
+def _standalone_execute_result(script: StandaloneScript, script_path: Path, stdout: str) -> ToolResult:
+    evidence = [
+        EvidenceChunk(
+            chunk_id=f"script-output:{script.script_name}",
+            source_id="autonomy",
+            source_label="generated-python-artifact",
+            source_type="script_output",
+            title=f"Script output: {script.script_name}",
+            content=stdout[:4000],
+            uri=str(script_path),
+            metadata={"chunk_label": script.script_name, "script_name": script.script_name},
+            score=2.0,
+        ),
+        EvidenceChunk(
+            chunk_id=f"standalone-script:{script.script_name}",
+            source_id="autonomy",
+            source_label="generated-python-artifact",
+            source_type="generated_artifact",
+            title=script.script_name,
+            content=f"Script at: {script_path}\n{script.description}",
+            uri=str(script_path),
+            metadata={"chunk_label": script.script_name, "script_name": script.script_name},
+            score=1.0,
+        ),
+    ]
+    return ToolResult(
+        tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+        ok=True,
+        summary=stdout[:500],
+        data={
+            "script_path": str(script_path),
+            "script_name": script.script_name,
+            "description": script.description,
+            "output_dir": str(script.output_dir),
+            "is_standalone": True,
+            "executed": True,
+            "execution_stdout": stdout,
+            "execution_error": "",
+        },
+        evidence=evidence,
+    )
 
 
 def _shell_execution_policy(config: RuntimeConfig, execute_requested: bool) -> dict[str, Any]:

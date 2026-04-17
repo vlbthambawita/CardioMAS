@@ -131,11 +131,35 @@ def _plan_with_ollama(
         return stop.value
 
 
+def _is_script_only_mode(config: RuntimeConfig) -> bool:
+    return (
+        config.autonomy.dataset_mode == "script_only"
+        and bool(_first_dataset_path(config))
+        and config.autonomy.enabled
+        and config.autonomy.allow_tool_codegen
+    )
+
+
 def _heuristic_plan(query: str, config: RuntimeConfig, registry: ToolRegistry) -> AgentDecision:
     lower = query.lower()
     steps: list[PlanStep] = []
     notes: list[str] = []
     available = {spec.name for spec in registry.specs()}
+
+    if _is_script_only_mode(config) and "generate_python_artifact" in available:
+        dataset_path = _first_dataset_path(config)
+        target_path = _extract_local_path(query)
+        return AgentDecision(
+            strategy="single_tool",
+            steps=[
+                PlanStep(
+                    tool_name="generate_python_artifact",
+                    reason="Dataset query in script_only mode — generating standalone analysis script.",
+                    args={"task": query, "dataset_path": dataset_path, "target_path": target_path, "artifact_name": ""},
+                )
+            ],
+            notes=["script_only mode: routing exclusively to generate_python_artifact."],
+        )
 
     urls = re.findall(r"https?://\S+", query)
     if urls and "fetch_webpage" in available:
@@ -199,6 +223,13 @@ def _sanitize_decision(
     expression: str,
 ) -> AgentDecision:
     available = {spec.name for spec in registry.specs()}
+
+    if _is_script_only_mode(config) and "generate_python_artifact" in available:
+        pa_steps = [s for s in decision.steps if s.tool_name == "generate_python_artifact"]
+        if not pa_steps:
+            return _heuristic_plan(query, config, registry)
+        decision = AgentDecision(strategy="single_tool", steps=pa_steps[:1], notes=decision.notes)
+
     steps: list[PlanStep] = []
 
     for step in decision.steps:

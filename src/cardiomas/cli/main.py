@@ -138,9 +138,32 @@ def version() -> None:
 
 
 def _render_query_result(result: dict, answer_already_streamed: bool = False) -> None:
+    standalone_scripts = result.get("standalone_scripts", [])
+    executed_scripts = [s for s in standalone_scripts if s.get("executed") and s.get("execution_stdout")]
+
+    if standalone_scripts and not executed_scripts:
+        # Phase 1: show script locations, answer IS the script report
+        console.print("[bold green]Scripts Generated[/bold green]")
+        console.rule()
+        for script in standalone_scripts:
+            console.print(f"  [cyan]{script.get('script_name', '')}[/cyan]")
+            console.print(f"  Path:   {script.get('script_path', '')}")
+            console.print(f"  Run:    python {script.get('script_path', '')}")
+            if script.get("output_dir"):
+                console.print(f"  Output: {script['output_dir']}/results.json")
+            console.print()
+        return
+
     if not answer_already_streamed:
         console.print("[bold]Answer[/bold]")
         console.print(result["answer"])
+
+    if executed_scripts:
+        console.print()
+        console.print("[bold green]Script(s) Executed[/bold green]")
+        console.rule()
+        for script in executed_scripts:
+            console.print(f"  [cyan]{script.get('script_name', '')}[/cyan]  →  {script.get('script_path', '')}")
 
     if result["citations"]:
         table = Table(title="Citations")

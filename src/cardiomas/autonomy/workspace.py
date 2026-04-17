@@ -97,6 +97,16 @@ class AutonomyWorkspace:
         stderr_path.write_text(stderr, encoding="utf-8")
         return [str(run_path), str(stdout_path), str(stderr_path)]
 
+    def scripts_output_dir(self) -> Path:
+        d = self.config.resolved_scripts_dir
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def write_standalone_script(self, script: "StandaloneScript") -> Path:
+        dest = self.scripts_output_dir() / script.script_name
+        dest.write_text(script.code, encoding="utf-8")
+        return dest
+
     def load_tool_module(self, session_id: str, artifact_slug: str) -> ModuleType:
         path = self.artifact_entrypoint(session_id, artifact_slug, "python")
         if not path.exists():

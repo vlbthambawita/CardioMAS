@@ -43,6 +43,20 @@ def compose_answer_events(
     chat_client: ChatClient | None = None,
 ) -> Generator[AgentEvent, None, tuple[str, list[Citation], list[LLMTrace], list[str]]]:
     yield AgentEvent(type="status", stage="responder", message="Response synthesis started.")
+
+    standalone_scripts = aggregate.get("standalone_scripts", [])
+    if standalone_scripts:
+        executed_with_output = [
+            s for s in standalone_scripts
+            if s.get("executed") and s.get("execution_stdout", "").strip()
+        ]
+        if not executed_with_output:
+            # Phase 1: scripts written but not executed — report paths, no LLM
+            answer = _compose_script_report(query, standalone_scripts)
+            yield AgentEvent(type="status", stage="responder", message="Response synthesis finished.")
+            return answer, [], [], []
+        # Phase 2: script ran — evidence contains script_output chunk (score=2.0); fall through to normal responder
+
     if config.responder_uses_ollama and chat_client is not None and config.llm is not None:
         result = yield from _compose_with_ollama_events(query, config, evidence, aggregate, warnings, chat_client)
         yield AgentEvent(type="status", stage="responder", message="Response synthesis finished.")
@@ -138,6 +152,24 @@ def _compose_with_ollama(
         return stop.value
 
 
+def _compose_script_report(query: str, standalone_scripts: list[dict]) -> str:
+    lines = ["Scripts have been generated to answer your query.", f"\nQuery: {query}", "\nGenerated script(s):"]
+    for i, script in enumerate(standalone_scripts, 1):
+        script_path = script.get("script_path", "")
+        script_name = script.get("script_name", "script.py")
+        description = script.get("description", "")
+        output_dir = script.get("output_dir", "")
+        lines.append(f"\n  {i}. {script_name}")
+        if description:
+            lines.append(f"     Purpose: {description}")
+        lines.append(f"     Path:    {script_path}")
+        lines.append(f"\nHow to run:\n  python {script_path}")
+        if output_dir:
+            lines.append(f"\nOutput will be written to:\n  {output_dir}/results.json")
+    lines.append("\nNo answer is inferred by the agent. Run the script(s) to get the exact result.")
+    return "\n".join(lines)
+
+
 def _compose_deterministic(
     query: str,
     config: RuntimeConfig,
@@ -147,6 +179,19 @@ def _compose_deterministic(
 ) -> tuple[str, list[Citation]]:
     lines: list[str] = []
     citations: list[Citation] = []
+
+    # Phase 2: script output evidence takes priority
+    script_output_chunks = [c for c in evidence if c.source_type == "script_output"]
+    if script_output_chunks:
+        chunk = script_output_chunks[0]
+        lines.append("Script execution output:")
+        lines.append(chunk.content)
+        citations.append(chunk.citation())
+        if warnings:
+            lines.append("\nWarnings:")
+            for warning in warnings:
+                lines.append(f"- {warning}")
+        return "\n".join(lines), citations
 
     calculations = aggregate.get("calculations", [])
     if calculations:

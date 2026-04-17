@@ -74,6 +74,9 @@ class AutonomyConfig(BaseModel):
     enable_code_agents: bool = False
     allow_tool_codegen: bool = False
     allow_script_codegen: bool = False
+    dataset_mode: Literal["script_only", "agentic"] = "agentic"
+    execute_for_answer: bool = False
+    execution_timeout_seconds: int = 60
     max_repair_attempts: int = 2
     workspace_dir: str = ""
     require_approval_for_repo_writes: bool = True
@@ -150,6 +153,7 @@ class RuntimeConfig(BaseModel):
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     llm: LLMConfig | None = None
     embeddings: EmbeddingConfig | None = None
+    scripts_dir: str = ""
 
     @property
     def corpus_path(self) -> Path:
@@ -164,6 +168,12 @@ class RuntimeConfig(BaseModel):
         if self.autonomy.workspace_dir:
             return Path(self.autonomy.workspace_dir)
         return Path(self.output_dir) / "autonomy_workspace"
+
+    @property
+    def resolved_scripts_dir(self) -> Path:
+        if self.scripts_dir:
+            return Path(self.scripts_dir)
+        return Path(self.output_dir) / "scripts"
 
     @property
     def planner_uses_ollama(self) -> bool:
@@ -234,6 +244,9 @@ def _resolve_relative_paths(data: dict, base_dir: Path) -> dict:
         if isinstance(workspace_dir, str) and workspace_dir and not Path(workspace_dir).is_absolute():
             autonomy_resolved["workspace_dir"] = str((base_dir / workspace_dir).resolve())
         resolved["autonomy"] = autonomy_resolved
+    scripts_dir = resolved.get("scripts_dir")
+    if isinstance(scripts_dir, str) and scripts_dir and not Path(scripts_dir).is_absolute():
+        resolved["scripts_dir"] = str((base_dir / scripts_dir).resolve())
     return resolved
 
 

@@ -73,3 +73,4 @@ class QueryResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     llm_traces: list[LLMTrace] = Field(default_factory=list)
     repair_traces: list[RepairTrace] = Field(default_factory=list)
+    standalone_scripts: list[dict] = Field(default_factory=list)

@@ -114,6 +114,7 @@ class AgenticRuntime:
             warnings=warnings,
             llm_traces=planner_traces + responder_traces,
             repair_traces=self._autonomy_manager.consume_traces(),
+            standalone_scripts=aggregate.get("standalone_scripts", []),
         )
         yield AgentEvent(type="final_result", stage="runtime", message="Query finished.", data={"result": result.model_dump(mode="json")})
         return result
