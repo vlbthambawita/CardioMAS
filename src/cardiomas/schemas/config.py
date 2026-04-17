@@ -95,9 +95,23 @@ class RuntimeConfig(BaseModel):
 
         text = config_path.read_text(encoding="utf-8")
         if config_path.suffix.lower() == ".json":
-            data = json.loads(text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid JSON in {path} at line {exc.lineno}, column {exc.colno}."
+                ) from exc
         else:
-            data = yaml.safe_load(text)
+            try:
+                data = yaml.safe_load(text)
+            except yaml.YAMLError as exc:
+                mark = getattr(exc, "problem_mark", None)
+                location = ""
+                if mark is not None:
+                    location = f" at line {mark.line + 1}, column {mark.column + 1}"
+                raise ValueError(
+                    f"Invalid YAML in {path}{location}. Check indentation and ':' placement."
+                ) from exc
 
         if not isinstance(data, dict):
             raise ValueError("Runtime config must contain a mapping/object at the top level.")
