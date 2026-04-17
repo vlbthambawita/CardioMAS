@@ -102,9 +102,8 @@ def test_inspect_tools_shows_autonomous_tools_when_enabled(tmp_path):
     result = runner.invoke(app, ["inspect-tools", "--config", str(config_path)])
 
     assert result.exit_code == 0
-    assert "dataset_statistics" in result.output
-    assert "read_dataset_file" in result.output
-    assert "generate_shell_script" in result.output
+    assert "generate_python_artifact" in result.output
+    assert "generate_shell_artifact" in result.output
 
 
 def test_query_live_cli_renders_stream_events(tmp_path, monkeypatch):

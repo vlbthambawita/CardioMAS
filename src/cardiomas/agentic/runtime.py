@@ -67,15 +67,16 @@ class AgenticRuntime:
         manifest = self.build_corpus(force_rebuild=force_rebuild)
         yield AgentEvent(type="status", stage="corpus", message="Corpus ready.", data=manifest.model_dump(mode="json"))
         chunks = load_corpus(self.config)
+        session = self.sessions.start()
+        self.sessions.append_query(session.session_id, query)
         self._autonomy_manager.reset_traces()
+        self._autonomy_manager.set_session(session.session_id)
         registry = build_registry(
             self.config,
             chunks,
             embedding_client=self._embedding_client,
             autonomy_manager=self._autonomy_manager,
         )
-        session = self.sessions.start()
-        self.sessions.append_query(session.session_id, query)
 
         decision, planner_traces, planner_warnings = yield from plan_query_events(
             query,

@@ -148,42 +148,40 @@ def _heuristic_plan(query: str, config: RuntimeConfig, registry: ToolRegistry) -
 
     dataset_path = _first_dataset_path(config)
     target_path = _extract_local_path(query)
-    if "read_dataset_file" in available and (
-        target_path or _needs_file_read(lower)
-    ):
+    if dataset_path and "generate_python_artifact" in available and _needs_dynamic_code_generation(lower, target_path):
         steps.append(
             PlanStep(
-                tool_name="read_dataset_file",
-                reason="Query asks to read or inspect a specific local dataset file.",
-                args={"target_path": target_path, "dataset_path": dataset_path},
+                tool_name="generate_python_artifact",
+                reason="Query asks for dataset reading or analysis that should be handled by a generated Python artifact.",
+                args={"task": query, "dataset_path": dataset_path, "target_path": target_path},
             )
         )
 
-    if dataset_path and "dataset_statistics" in available and _needs_dataset_statistics(lower):
-        steps.append(
-            PlanStep(
-                tool_name="dataset_statistics",
-                reason="Query asks for dataset statistics or summary analysis.",
-                args={"dataset_path": dataset_path},
-            )
-        )
-
-    if dataset_path and "inspect_dataset" in available and _needs_dataset_inspection(lower):
+    if dataset_path and "inspect_dataset" in available and _needs_dataset_inspection(lower) and "generate_python_artifact" not in available:
         steps.append(PlanStep(tool_name="inspect_dataset", reason="Query asks about local dataset structure or metadata.", args={"dataset_path": dataset_path}))
 
-    if dataset_path and "generate_shell_script" in available and _needs_shell_script(lower):
+    if dataset_path and "generate_shell_artifact" in available and _needs_shell_script(lower):
         steps.append(
             PlanStep(
-                tool_name="generate_shell_script",
+                tool_name="generate_shell_artifact",
                 reason="Query asks for a shell script or batch command.",
-                args={"task": query, "dataset_path": dataset_path},
+                args={"task": query, "dataset_path": dataset_path, "execute": _asks_to_run_script(lower)},
             )
         )
 
     if "retrieve_corpus" in available:
         steps.append(PlanStep(tool_name="retrieve_corpus", reason="Ground the answer with corpus retrieval.", args={"query": query, "top_k": config.retrieval.top_k}))
 
-    if not steps and "inspect_dataset" in available and dataset_path:
+    if not steps and dataset_path and "generate_python_artifact" in available:
+        steps.append(
+            PlanStep(
+                tool_name="generate_python_artifact",
+                reason="Fallback to a generated Python artifact for the dataset query.",
+                args={"task": query, "dataset_path": dataset_path, "target_path": target_path},
+            )
+        )
+        notes.append("No specialized tool matched the query; using generated dataset code as the fallback.")
+    elif not steps and "inspect_dataset" in available and dataset_path:
         steps.append(PlanStep(tool_name="inspect_dataset", reason="Fallback to dataset inspection because no other tool matched.", args={"dataset_path": dataset_path}))
         notes.append("No specialized tool matched the query; using dataset inspection fallback.")
 
@@ -223,20 +221,16 @@ def _sanitize_decision(
             if not url:
                 continue
             args["url"] = url
-        elif step.tool_name == "read_dataset_file":
+        elif step.tool_name == "generate_python_artifact":
             args["dataset_path"] = dataset_path
+            args["task"] = query
             args["target_path"] = str(args.get("target_path") or _extract_local_path(query))
-            args["max_preview_lines"] = _safe_top_k(args.get("max_preview_lines"), 40)
-        elif step.tool_name == "dataset_statistics":
-            if not dataset_path:
-                continue
-            args["dataset_path"] = dataset_path
-            args["target_file"] = str(args.get("target_file") or "")
-        elif step.tool_name == "generate_shell_script":
+        elif step.tool_name == "generate_shell_artifact":
             if not dataset_path:
                 continue
             args["dataset_path"] = dataset_path
             args["task"] = query
+            args["execute"] = bool(args.get("execute")) and _asks_to_run_script(query.lower())
         steps.append(
             PlanStep(
                 tool_name=step.tool_name,
@@ -279,6 +273,34 @@ def _needs_shell_script(lower: str) -> bool:
 def _needs_file_read(lower: str) -> bool:
     hints = ["read file", "inspect file", "open file", "show file", "read dataset file"]
     return any(hint in lower for hint in hints)
+
+
+def _needs_dynamic_code_generation(lower: str, target_path: str) -> bool:
+    if _needs_shell_script(lower):
+        return False
+    if target_path:
+        return True
+    return _needs_file_read(lower) or _needs_dataset_statistics(lower) or _needs_dataset_inspection(lower) or any(
+        hint in lower
+        for hint in [
+            "analyze",
+            "analysis",
+            "summarize",
+            "summary",
+            "label",
+            "class",
+            "metadata",
+            "columns",
+            "rows",
+            "missing",
+            "hea",
+            "header",
+        ]
+    )
+
+
+def _asks_to_run_script(lower: str) -> bool:
+    return any(hint in lower for hint in ["run the script", "execute the script", "and run it", "execute it"])
 
 
 def _first_dataset_path(config: RuntimeConfig) -> str:

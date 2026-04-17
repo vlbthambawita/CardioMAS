@@ -40,13 +40,12 @@ def planner_messages(
                 f"{json.dumps(context, indent=2)}\n\n"
                 "Rules:\n"
                 "- Use retrieve_corpus for grounded answers when available.\n"
-                "- Use inspect_dataset only for dataset/file/metadata questions.\n"
-                "- Use dataset_statistics for distribution, counts, missingness, and summary-statistics requests.\n"
-                "- Use read_dataset_file for explicit file-reading or unsupported local file inspection requests.\n"
-                "- Use generate_shell_script only when the user asks for a shell or bash script.\n"
+                "- Prefer generate_python_artifact for local dataset reading, file inspection, metadata extraction, and statistical analysis.\n"
+                "- Use inspect_dataset only when no generated Python artifact tool is available.\n"
+                "- Use generate_shell_artifact only when the user asks for a shell or bash script.\n"
                 "- Use calculate only for explicit arithmetic.\n"
                 "- Use fetch_webpage only for direct URLs already present in the query.\n"
-                "- Prefer the default_dataset_path when inspect_dataset is needed.\n"
+                "- Prefer the default_dataset_path when a dataset tool is needed.\n"
                 "- Return compact JSON only."
             ),
         ),
@@ -77,6 +76,8 @@ def responder_messages(
     tool_context = {
         "dataset_inspection": aggregate.get("dataset_inspection"),
         "calculations": aggregate.get("calculations", []),
+        "generated_python_artifacts": aggregate.get("generated_python_artifacts", []),
+        "generated_shell_artifacts": aggregate.get("generated_shell_artifacts", []),
         "web_pages": aggregate.get("web_pages", []),
         "warnings": warnings,
     }

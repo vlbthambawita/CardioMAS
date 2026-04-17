@@ -9,8 +9,13 @@ def verify_generated_tool_source(source: str, config: RuntimeConfig) -> list[str
     return verify_python_ast(source, config)
 
 
-def verify_generated_tool(workspace: AutonomyWorkspace, tool_name: str, config: RuntimeConfig) -> list[str]:
-    entrypoint = workspace.tool_entrypoint(tool_name)
+def verify_generated_tool(
+    workspace: AutonomyWorkspace,
+    session_id: str,
+    artifact_slug: str,
+    config: RuntimeConfig,
+) -> list[str]:
+    entrypoint = workspace.artifact_entrypoint(session_id, artifact_slug, "python")
     if not entrypoint.exists():
         return [f"Generated tool entrypoint does not exist: {entrypoint}"]
 
@@ -18,7 +23,7 @@ def verify_generated_tool(workspace: AutonomyWorkspace, tool_name: str, config: 
     if errors:
         return errors
 
-    module = workspace.load_tool_module(tool_name)
+    module = workspace.load_tool_module(session_id, artifact_slug)
     run = getattr(module, "run", None)
     if run is None or not callable(run):
         return ["Generated tool does not expose a callable run(payload) function."]

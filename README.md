@@ -1,6 +1,6 @@
 # CardioMAS
 
-CardioMAS is a local-first Agentic RAG runtime for dataset understanding and grounded question answering. The current runtime supports deterministic execution, Ollama-backed planning and response generation, and a guarded autonomy layer that can generate small local tools and shell scripts on demand.
+CardioMAS is a local-first Agentic RAG runtime for dataset understanding and grounded question answering. The current runtime supports deterministic execution, Ollama-backed planning and response generation, and a guarded autonomy layer that generates query-specific Python and shell artifacts on demand.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ The active runtime is organized around:
 - `tools/` for retrieval, dataset inspection, research, and utility tools
 - `agentic/` for planning, execution, aggregation, and answering
 - `inference/` for Ollama chat and embedding clients
-- `autonomy/` and `coding/` for generated-tool workspaces, verification, and bounded repair loops
+- `autonomy/` and `coding/` for generated artifact workspaces, verification, and bounded repair loops
 
 ## Install
 
@@ -153,10 +153,11 @@ cardiomas inspect-tools --config examples/ollama/runtime_local.yaml
 
 - If `embeddings:` is configured and Ollama is reachable, corpus chunks are stored with embedding vectors and dense or hybrid retrieval uses them.
 - If `llm:` is configured, the responder uses Ollama for grounded answer synthesis.
-- If `llm.planner_mode: ollama`, the planner can choose autonomous tools such as `dataset_statistics`, `read_dataset_file`, and `generate_shell_script`.
-- If `autonomy:` is enabled, CardioMAS writes generated tool packages and scripts under the autonomy workspace, verifies them, and records repair traces in query results.
-- Generated Python tools are limited to a safe import set and are re-generated when verification fails.
-- Shell scripts are written but not executed automatically.
+- If `llm.planner_mode: ollama`, the planner can choose autonomous tools such as `generate_python_artifact` and `generate_shell_artifact`.
+- If `autonomy:` is enabled, CardioMAS writes each generated artifact under `autonomy_workspace/sessions/<session_id>/<artifact_slug>/`, stores `prompt.json` and `context.json`, verifies the code, records per-attempt run logs, and reports repair traces in query results.
+- `generate_python_artifact` is the main dynamic path for dataset file reading, metadata extraction, and statistical analysis; the runtime does not expose ECG-specific built-in analysis tools.
+- Generated Python artifacts are limited to a safe import set and are re-generated when verification fails.
+- Shell artifacts are saved in the same workspace and execute only when policy allows it.
 - `cardiomas query --live` streams step events such as planning, tool start/finish, repair traces, and raw LLM token chunks. Planner and responder token streams are structured JSON because those stages currently use JSON-constrained prompts.
 
 ## PTB-XL Example

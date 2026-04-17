@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+import hashlib
+import io
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
+from uuid import uuid4
 
 from cardiomas.autonomy.policy import script_codegen_allowed, tool_codegen_allowed
 from cardiomas.autonomy.verifier import verify_generated_script, verify_generated_tool
 from cardiomas.autonomy.workspace import AutonomyWorkspace
 from cardiomas.coding.script_builder import build_shell_script
-from cardiomas.coding.tool_builder import build_generated_tool_package
+from cardiomas.coding.tool_builder import GeneratedArtifactPackage, build_generated_tool_package
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.evidence import EvidenceChunk
 from cardiomas.schemas.runtime import RepairTrace
 from cardiomas.schemas.tools import ToolResult, ToolSpec
 
 
-AUTONOMOUS_TOOL_NAMES = ("dataset_statistics", "generate_shell_script", "read_dataset_file")
+PYTHON_ARTIFACT_TOOL_NAME = "generate_python_artifact"
+SHELL_ARTIFACT_TOOL_NAME = "generate_shell_artifact"
 
 
 class AutonomousToolManager:
@@ -23,10 +29,14 @@ class AutonomousToolManager:
         self.config = config
         self.workspace = AutonomyWorkspace(config)
         self._traces: list[RepairTrace] = []
+        self._session_id = ""
 
     @property
     def enabled(self) -> bool:
         return self.config.autonomy.enabled
+
+    def set_session(self, session_id: str) -> None:
+        self._session_id = session_id
 
     def reset_traces(self) -> None:
         self._traces = []
@@ -44,61 +54,61 @@ class AutonomousToolManager:
             return []
         specs: list[ToolSpec] = []
         if tool_codegen_allowed(self.config):
-            specs.extend(
-                [
-                    ToolSpec(
-                        name="read_dataset_file",
-                        description="Generate or repair a dataset file reader and inspect a specific file or reader-compatible dataset path.",
-                        category="autonomy",
-                        generated=True,
-                    ),
-                    ToolSpec(
-                        name="dataset_statistics",
-                        description="Generate or repair a dataset statistics tool for tabular or mixed local datasets.",
-                        category="autonomy",
-                        generated=True,
-                    ),
-                ]
-            )
-        if script_codegen_allowed(self.config):
             specs.append(
                 ToolSpec(
-                    name="generate_shell_script",
-                    description="Generate a bounded shell script in the autonomy workspace for a local dataset task.",
+                    name=PYTHON_ARTIFACT_TOOL_NAME,
+                    description="Generate, verify, and execute a query-specific Python artifact for local dataset reading or analysis.",
                     category="autonomy",
                     generated=True,
                 )
             )
-        for spec in self.workspace.list_generated_specs():
-            if spec.name not in {item.name for item in specs}:
-                specs.append(spec)
+        if script_codegen_allowed(self.config):
+            specs.append(
+                ToolSpec(
+                    name=SHELL_ARTIFACT_TOOL_NAME,
+                    description="Generate a bounded shell artifact for a local dataset task and execute it only when policy allows.",
+                    category="autonomy",
+                    generated=True,
+                )
+            )
         return specs
 
-    def read_dataset_file(self, target_path: str = "", dataset_path: str = "", max_preview_lines: int = 40) -> ToolResult:
-        payload = {"target_path": target_path, "dataset_path": dataset_path, "max_preview_lines": max_preview_lines}
-        return self._execute_generated_tool("read_dataset_file", payload)
+    def generate_python_artifact(
+        self,
+        task: str,
+        dataset_path: str = "",
+        target_path: str = "",
+        artifact_name: str = "",
+    ) -> ToolResult:
+        payload = {
+            "task": task,
+            "dataset_path": dataset_path,
+            "target_path": target_path,
+            "artifact_name": artifact_name,
+        }
+        return self._execute_generated_python_artifact(payload)
 
-    def dataset_statistics(self, dataset_path: str = "", target_file: str = "") -> ToolResult:
-        payload = {"dataset_path": dataset_path, "target_file": target_file}
-        return self._execute_generated_tool("dataset_statistics", payload)
-
-    def generate_shell_script(self, task: str, dataset_path: str = "", script_name: str = "") -> ToolResult:
+    def generate_shell_artifact(
+        self,
+        task: str,
+        dataset_path: str = "",
+        artifact_name: str = "",
+        execute: bool = False,
+    ) -> ToolResult:
+        session_id = self._ensure_session()
+        artifact_slug = artifact_name or _artifact_slug(task, dataset_path, prefix="shell")
+        artifact_dir = self.workspace.artifact_dir(session_id, artifact_slug)
         trace = RepairTrace(
-            tool_name="generate_shell_script",
-            action="generate_script",
+            tool_name=SHELL_ARTIFACT_TOOL_NAME,
+            action="generate_artifact",
             attempt=1,
-            workspace_path=str(self.workspace.root),
+            workspace_path=str(artifact_dir),
         )
         if not script_codegen_allowed(self.config):
             trace.ok = False
-            trace.error = "Shell script generation is disabled by autonomy policy."
+            trace.error = "Shell artifact generation is disabled by autonomy policy."
             self._traces.append(trace)
-            return ToolResult(
-                tool_name="generate_shell_script",
-                ok=False,
-                summary="",
-                error=trace.error,
-            )
+            return ToolResult(tool_name=SHELL_ARTIFACT_TOOL_NAME, ok=False, summary="", error=trace.error)
 
         script = build_shell_script(task=task, dataset_path=dataset_path, config=self.config)
         errors = verify_generated_script(script)
@@ -107,59 +117,156 @@ class AutonomousToolManager:
             trace.ok = False
             trace.error = "; ".join(errors)
             self._traces.append(trace)
-            return ToolResult(tool_name="generate_shell_script", ok=False, summary="", error=trace.error)
+            return ToolResult(tool_name=SHELL_ARTIFACT_TOOL_NAME, ok=False, summary="", error=trace.error)
 
-        normalized_name = script_name or _slug(task) or "generated_task.sh"
-        if not normalized_name.endswith(".sh"):
-            normalized_name = f"{normalized_name}.sh"
-        script_path = self.workspace.write_script(normalized_name, script)
-        trace.files_written = [str(script_path)]
-        trace.retry_succeeded = True
+        spec = ToolSpec(
+            name=SHELL_ARTIFACT_TOOL_NAME,
+            description="Generated shell artifact saved in the autonomy workspace.",
+            category="autonomy",
+            generated=True,
+        )
+        prompt = {
+            "tool_name": SHELL_ARTIFACT_TOOL_NAME,
+            "task": task,
+            "dataset_path": dataset_path,
+            "execute_requested": execute,
+        }
+        context = {"dataset_path": dataset_path, "execution_policy": _shell_execution_policy(self.config, execute)}
+        readme = (
+            f"# {artifact_slug}\n\n"
+            f"- Task: {task or '(none provided)'}\n"
+            "- Contract: the generated shell artifact is saved in this directory and may only be executed when policy allows.\n"
+        )
+        trace.files_written = self.workspace.write_artifact_package(
+            session_id=session_id,
+            artifact_slug=artifact_slug,
+            spec=spec,
+            code=script,
+            readme=readme,
+            prompt=prompt,
+            context=context,
+            kind="shell",
+        )
+
+        script_path = self.workspace.artifact_entrypoint(session_id, artifact_slug, "shell")
+        executed = bool(execute and not self.config.autonomy.require_approval_for_shell_execution)
+        stdout = ""
+        stderr = ""
+        error = ""
+        if executed:
+            completed = subprocess.run(
+                ["bash", str(script_path), dataset_path or "."],
+                capture_output=True,
+                text=True,
+                cwd=artifact_dir,
+                timeout=60,
+                check=False,
+            )
+            stdout = completed.stdout
+            stderr = completed.stderr
+            ok = completed.returncode == 0
+            if not ok:
+                error = stderr.strip() or f"Shell artifact exited with code {completed.returncode}."
+            summary = (
+                f"Generated and executed shell artifact at {script_path}"
+                if ok
+                else f"Generated shell artifact at {script_path}, but execution failed."
+            )
+            extra = {"executed": True, "returncode": completed.returncode}
+        else:
+            ok = True
+            reason = (
+                "execution skipped because approval is required by policy"
+                if execute and self.config.autonomy.require_approval_for_shell_execution
+                else "execution not requested"
+            )
+            summary = f"Generated shell artifact at {script_path}; {reason}."
+            extra = {"executed": False, "reason": reason}
+
+        run_files = self.workspace.write_execution_record(
+            session_id=session_id,
+            artifact_slug=artifact_slug,
+            attempt=1,
+            payload={"task": task, "dataset_path": dataset_path, "execute": execute},
+            ok=ok,
+            summary=summary,
+            error=error,
+            stdout=stdout,
+            stderr=stderr,
+            extra=extra,
+        )
+        trace.retry_succeeded = ok
+        if not ok:
+            trace.ok = False
+            trace.error = error
         self._traces.append(trace)
-        content = script_path.read_text(encoding="utf-8")
+
         evidence = [
             EvidenceChunk(
-                chunk_id=f"generated-script:{normalized_name}",
+                chunk_id=f"generated-script:{artifact_slug}",
                 source_id="autonomy",
-                source_label="generated-script",
+                source_label="generated-shell-artifact",
                 source_type="generated_script",
-                title=normalized_name,
-                content=content,
+                title=artifact_slug,
+                content=script,
                 uri=str(script_path),
-                metadata={"path": str(script_path), "chunk_label": normalized_name},
+                metadata={"path": str(script_path), "chunk_label": artifact_slug},
                 score=1.0,
             )
         ]
         return ToolResult(
-            tool_name="generate_shell_script",
-            ok=True,
-            summary=f"Generated shell script at {script_path}",
-            data={"script_path": str(script_path), "script_name": normalized_name, "task": task, "script": content},
+            tool_name=SHELL_ARTIFACT_TOOL_NAME,
+            ok=ok,
+            summary=summary,
+            data={
+                "artifact_slug": artifact_slug,
+                "artifact_kind": "shell",
+                "artifact_dir": str(artifact_dir),
+                "artifact_entrypoint": str(script_path),
+                "prompt_path": str(artifact_dir / "prompt.json"),
+                "context_path": str(artifact_dir / "context.json"),
+                "script_path": str(script_path),
+                "executed": executed,
+                "execution_records": run_files,
+                "stdout": stdout,
+                "stderr": stderr,
+            },
             evidence=evidence,
+            error=error,
         )
 
-    def _execute_generated_tool(self, tool_name: str, payload: dict[str, Any]) -> ToolResult:
+    def _execute_generated_python_artifact(self, payload: dict[str, Any]) -> ToolResult:
         if not tool_codegen_allowed(self.config):
             return ToolResult(
-                tool_name=tool_name,
+                tool_name=PYTHON_ARTIFACT_TOOL_NAME,
                 ok=False,
                 summary="",
-                error="Autonomous tool generation is disabled by autonomy policy.",
+                error="Autonomous Python artifact generation is disabled by autonomy policy.",
             )
 
+        session_id = self._ensure_session()
         last_error = ""
         for attempt in range(1, self.config.autonomy.max_repair_attempts + 2):
-            action = "generate" if attempt == 1 else "repair"
             trace = RepairTrace(
-                tool_name=tool_name,
-                action=action,
+                tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+                action="generate_artifact" if attempt == 1 else "repair_artifact",
                 attempt=attempt,
-                workspace_path=str(self.workspace.tool_dir(tool_name)),
+                workspace_path=str(self.workspace.session_dir(session_id)),
             )
             try:
-                spec, code, readme = build_generated_tool_package(tool_name, payload, self.config, last_error=last_error)
-                trace.files_written = self.workspace.write_tool_package(tool_name, spec, code, readme)
-                errors = verify_generated_tool(self.workspace, tool_name, self.config)
+                package = build_generated_tool_package(PYTHON_ARTIFACT_TOOL_NAME, payload, self.config, last_error=last_error)
+                trace.workspace_path = str(self.workspace.artifact_dir(session_id, package.artifact_slug))
+                trace.files_written = self.workspace.write_artifact_package(
+                    session_id=session_id,
+                    artifact_slug=package.artifact_slug,
+                    spec=package.spec,
+                    code=package.code,
+                    readme=package.readme,
+                    prompt=package.prompt,
+                    context=package.context,
+                    kind=package.kind,
+                )
+                errors = verify_generated_tool(self.workspace, session_id, package.artifact_slug, self.config)
                 trace.verification = errors or ["tool verification passed"]
                 if errors:
                     trace.ok = False
@@ -168,16 +275,14 @@ class AutonomousToolManager:
                     self._traces.append(trace)
                     continue
 
-                module = self.workspace.load_tool_module(tool_name)
-                result_payload = module.run(payload)
-                result = _normalize_tool_result(tool_name, result_payload)
+                result = self._run_python_artifact(package, payload, session_id, attempt)
                 if result.ok:
                     trace.retry_succeeded = True
                     self._traces.append(trace)
                     return result
 
                 trace.ok = False
-                trace.error = result.error or "Generated tool returned ok=False."
+                trace.error = result.error or "Generated Python artifact returned ok=False."
                 last_error = trace.error
                 self._traces.append(trace)
             except Exception as exc:
@@ -187,11 +292,123 @@ class AutonomousToolManager:
                 self._traces.append(trace)
 
         return ToolResult(
-            tool_name=tool_name,
+            tool_name=PYTHON_ARTIFACT_TOOL_NAME,
             ok=False,
             summary="",
-            error=f"Autonomous tool generation failed for {tool_name}: {last_error or 'unknown error'}",
+            error=f"Autonomous Python artifact generation failed: {last_error or 'unknown error'}",
         )
+
+    def _run_python_artifact(
+        self,
+        package: GeneratedArtifactPackage,
+        payload: dict[str, Any],
+        session_id: str,
+        attempt: int,
+    ) -> ToolResult:
+        artifact_dir = self.workspace.artifact_dir(session_id, package.artifact_slug)
+        output_dir = self.workspace.artifact_output_dir(session_id, package.artifact_slug)
+        execution_payload = dict(payload)
+        execution_payload.update(
+            {
+                "artifact_output_dir": str(output_dir),
+                "artifact_slug": package.artifact_slug,
+                "session_id": session_id,
+            }
+        )
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+
+        try:
+            module = self.workspace.load_tool_module(session_id, package.artifact_slug)
+            with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+                raw_result = module.run(execution_payload)
+            result = _normalize_tool_result(PYTHON_ARTIFACT_TOOL_NAME, raw_result)
+        except Exception as exc:
+            stdout = stdout_buffer.getvalue()
+            stderr = stderr_buffer.getvalue()
+            error = str(exc)
+            run_files = self.workspace.write_execution_record(
+                session_id=session_id,
+                artifact_slug=package.artifact_slug,
+                attempt=attempt,
+                payload=execution_payload,
+                ok=False,
+                summary="",
+                error=error,
+                stdout=stdout,
+                stderr=stderr,
+                extra={"artifact_kind": "python"},
+            )
+            return ToolResult(
+                tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+                ok=False,
+                summary="",
+                error=error,
+                data={
+                    "artifact_slug": package.artifact_slug,
+                    "artifact_kind": "python",
+                    "artifact_dir": str(artifact_dir),
+                    "artifact_entrypoint": str(self.workspace.artifact_entrypoint(session_id, package.artifact_slug, "python")),
+                    "execution_records": run_files,
+                },
+            )
+
+        stdout = stdout_buffer.getvalue()
+        stderr = stderr_buffer.getvalue()
+        run_files = self.workspace.write_execution_record(
+            session_id=session_id,
+            artifact_slug=package.artifact_slug,
+            attempt=attempt,
+            payload=execution_payload,
+            ok=result.ok,
+            summary=result.summary,
+            error=result.error,
+            stdout=stdout,
+            stderr=stderr,
+            extra={"artifact_kind": "python"},
+        )
+        data = dict(result.data)
+        data.update(
+            {
+                "artifact_slug": package.artifact_slug,
+                "artifact_kind": "python",
+                "artifact_dir": str(artifact_dir),
+                "artifact_entrypoint": str(self.workspace.artifact_entrypoint(session_id, package.artifact_slug, "python")),
+                "prompt_path": str(artifact_dir / "prompt.json"),
+                "context_path": str(artifact_dir / "context.json"),
+                "execution_records": run_files,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+        )
+        evidence = list(result.evidence)
+        if not evidence:
+            evidence.append(
+                EvidenceChunk(
+                    chunk_id=f"generated-artifact:{package.artifact_slug}",
+                    source_id="autonomy",
+                    source_label="generated-python-artifact",
+                    source_type="generated_artifact",
+                    title=package.artifact_slug,
+                    content=result.summary,
+                    uri=str(output_dir / "result.json"),
+                    metadata={"chunk_label": package.artifact_slug, "artifact_slug": package.artifact_slug},
+                    score=1.0,
+                )
+            )
+        return ToolResult(
+            tool_name=PYTHON_ARTIFACT_TOOL_NAME,
+            ok=result.ok,
+            summary=result.summary,
+            data=data,
+            evidence=evidence,
+            error=result.error,
+        )
+
+    def _ensure_session(self) -> str:
+        if not self._session_id:
+            self._session_id = f"adhoc-{uuid4().hex[:8]}"
+        return self._session_id
 
 
 def _normalize_tool_result(tool_name: str, payload: Any) -> ToolResult:
@@ -224,6 +441,19 @@ def _normalize_tool_result(tool_name: str, payload: Any) -> ToolResult:
     )
 
 
+def _artifact_slug(task: str, dataset_path: str, prefix: str) -> str:
+    base = _slug(task or prefix)
+    digest = hashlib.sha1(f"{prefix}|{dataset_path}|{task}".encode("utf-8")).hexdigest()[:8]
+    return f"{prefix}-{base[:32] or 'artifact'}-{digest}"
+
+
+def _shell_execution_policy(config: RuntimeConfig, execute_requested: bool) -> dict[str, Any]:
+    return {
+        "execute_requested": execute_requested,
+        "allowed_without_approval": not config.autonomy.require_approval_for_shell_execution,
+        "require_approval_for_shell_execution": config.autonomy.require_approval_for_shell_execution,
+    }
+
+
 def _slug(value: str) -> str:
-    normalized = "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
-    return normalized[:48]
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")

@@ -94,11 +94,9 @@ def build_registry(
         for spec in autonomy_manager.tool_specs():
             if registry.has(spec.name):
                 continue
-            if spec.name == "read_dataset_file":
-                registry.register(spec, autonomy_manager.read_dataset_file)
-            elif spec.name == "dataset_statistics":
-                registry.register(spec, autonomy_manager.dataset_statistics)
-            elif spec.name == "generate_shell_script":
-                registry.register(spec, autonomy_manager.generate_shell_script)
+            if spec.name == "generate_python_artifact":
+                registry.register(spec, autonomy_manager.generate_python_artifact)
+            elif spec.name == "generate_shell_artifact":
+                registry.register(spec, autonomy_manager.generate_shell_artifact)
 
     return registry

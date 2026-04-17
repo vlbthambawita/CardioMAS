@@ -164,35 +164,39 @@ def _compose_deterministic(
             first_name, headers = next(iter(dataset_info["csv_headers"].items()))
             lines.append(f"Sample CSV schema from `{first_name}`: {', '.join(headers) if headers else '(empty)'}.")
 
-    stats_info = aggregate.get("dataset_statistics")
-    if stats_info:
+    generated_python_artifacts = aggregate.get("generated_python_artifacts", [])
+    if generated_python_artifacts:
+        latest_artifact = generated_python_artifacts[-1]
         lines.append(
-            "Dataset statistics: "
-            f"rows={stats_info.get('total_rows', 0)}, "
-            f"columns={len(stats_info.get('columns', []))}, "
-            f"missing_fraction={stats_info.get('missing_fraction', 0.0)}."
+            "Generated analysis artifact: "
+            f"`{latest_artifact.get('artifact_entrypoint', '')}` "
+            f"mode={latest_artifact.get('mode', latest_artifact.get('value', 'unknown'))}."
         )
-        class_counts = stats_info.get("class_counts") or {}
+        if latest_artifact.get("selected_path"):
+            lines.append(f"Selected file: `{latest_artifact['selected_path']}`.")
+        if latest_artifact.get("columns"):
+            lines.append(f"Detected columns: {', '.join(latest_artifact['columns'][:12])}.")
+        if "total_rows" in latest_artifact:
+            lines.append(
+                "Generated analysis metrics: "
+                f"rows={latest_artifact.get('total_rows', 0)}, "
+                f"missing_fraction={latest_artifact.get('missing_fraction', 0.0)}."
+            )
+        class_counts = latest_artifact.get("class_counts") or {}
         if isinstance(class_counts, dict) and class_counts.get("counts"):
             lines.append(f"Detected class counts from `{class_counts.get('column', 'label')}`: {class_counts['counts']}.")
-        numeric_summary = stats_info.get("numeric_summary") or {}
-        if numeric_summary:
-            first_name, values = next(iter(numeric_summary.items()))
-            lines.append(f"Sample numeric summary for `{first_name}`: {values}.")
+        preview_lines = latest_artifact.get("preview_lines") or []
+        if preview_lines:
+            lines.append(f"Preview: {' | '.join(preview_lines[:3])}.")
+        sample_files = latest_artifact.get("sample_files") or []
+        if sample_files:
+            lines.append(f"Sample files: {', '.join(sample_files[:8])}.")
 
-    file_reads = aggregate.get("file_reads", [])
-    if file_reads:
-        latest_file = file_reads[-1]
-        lines.append(
-            "Generated file reader: "
-            f"reader={latest_file.get('reader', 'unknown')}, "
-            f"path={latest_file.get('selected_path', '')}."
-        )
-
-    generated_scripts = aggregate.get("generated_scripts", [])
-    if generated_scripts:
-        latest_script = generated_scripts[-1]
-        lines.append(f"Generated shell script: `{latest_script.get('script_path', '')}`.")
+    generated_shell_artifacts = aggregate.get("generated_shell_artifacts", [])
+    if generated_shell_artifacts:
+        latest_script = generated_shell_artifacts[-1]
+        execution_note = "executed" if latest_script.get("executed") else "saved"
+        lines.append(f"Generated shell artifact ({execution_note}): `{latest_script.get('script_path', '')}`.")
 
     if evidence:
         lines.append("Retrieved evidence:")
