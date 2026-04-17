@@ -137,6 +137,7 @@ class LLMConfig(BaseModel):
     router_max_tokens: int = 300
     timeout_seconds: float = 60.0
     keep_alive: str = "5m"
+    repeat_penalty: float = 1.1  # Ollama default; raise to 1.2-1.3 to stop repetition loops
 
     @property
     def resolved_planner_model(self) -> str:

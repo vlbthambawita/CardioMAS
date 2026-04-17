@@ -123,7 +123,10 @@ class OllamaChatClient(ChatClient):
         return self._transport.list_models()
 
     def chat(self, request: ChatRequest) -> ChatResponse:
-        options: dict[str, Any] = {"temperature": request.temperature}
+        options: dict[str, Any] = {
+            "temperature": request.temperature,
+            "repeat_penalty": self.config.repeat_penalty,
+        }
         if request.max_tokens > 0:
             options["num_predict"] = request.max_tokens
 
@@ -147,7 +150,10 @@ class OllamaChatClient(ChatClient):
         return ChatResponse(model=str(response.get("model", request.model)), content=content, raw=response)
 
     def chat_stream(self, request: ChatRequest) -> Iterator[ChatChunk]:
-        options: dict[str, Any] = {"temperature": request.temperature}
+        options: dict[str, Any] = {
+            "temperature": request.temperature,
+            "repeat_penalty": self.config.repeat_penalty,
+        }
         if request.max_tokens > 0:
             options["num_predict"] = request.max_tokens
 

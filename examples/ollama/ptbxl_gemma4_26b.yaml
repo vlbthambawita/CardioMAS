@@ -28,11 +28,12 @@ llm:
   code_max_tokens: 4000
   code_temperature: 0.2
   timeout_seconds: 120.0
+  repeat_penalty: 1.3         # prevents gemma4 token repetition loops
 
 agent:
   mode: react
   max_iterations: 10
-  query_decomposition: false
+  query_decomposition: true
   self_reflection: true
   retrieval_grading: true
   memory_mode: persistent
@@ -62,5 +63,5 @@ tools:
     - calculate
 
 safety:
-  allow_web_fetch: false
+  allow_web_fetch: true
   allow_action_tools: true

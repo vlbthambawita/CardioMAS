@@ -152,14 +152,20 @@ def run_react_events(
             all_warnings.append("Answer grader flagged incomplete answer — more information may be needed.")
 
     # ── 9. Store in persistent memory ───────────────────────────────────────
+    _FAILURE_PHRASES = ("insufficient", "could not produce", "unable to", "no information", "cannot answer")
     if persistent_memory is not None and answer:
-        grounded = not any("hallucination" in w.lower() for w in all_warnings)
-        persistent_memory.store(
-            query=query,
-            answer=answer,
-            grounded=grounded,
-            evidence_ids=[c.chunk_id for c in evidence[:10]],
+        is_failure = any(p in answer.lower() for p in _FAILURE_PHRASES)
+        grounded = (
+            not is_failure
+            and not any("hallucination" in w.lower() for w in all_warnings)
         )
+        if grounded:
+            persistent_memory.store(
+                query=query,
+                answer=answer,
+                grounded=grounded,
+                evidence_ids=[c.chunk_id for c in evidence[:10]],
+            )
 
     yield AgentEvent(type="status", stage="react", message="ReAct agent finished.")
     return answer, citations, evidence, aggregate, all_tool_calls, all_llm_traces, all_warnings, all_react_steps
@@ -445,9 +451,22 @@ def _hint_first_tool(
     config: RuntimeConfig,
     query: str,
 ) -> None:
-    """Inject a routing hint as the first observation so the LLM starts efficiently."""
+    """Inject routing hint + configured dataset paths so the LLM never hallucinates paths."""
+    # Always inject the exact configured dataset paths first so the model never guesses.
+    dataset_paths = _all_dataset_paths(config)
+    if dataset_paths:
+        paths_str = "; ".join(dataset_paths)
+        observations.append({
+            "tool": "_config",
+            "observation": (
+                f"Configured dataset path(s): {paths_str}. "
+                "Use these exact paths when calling list_folder_structure, "
+                "read_wfdb_dataset, inspect_dataset, or generate_python_artifact."
+            ),
+        })
+
     if route.route == "code" and registry.has("generate_python_artifact"):
-        dataset_path = _first_dataset_path(config)
+        dataset_path = dataset_paths[0] if dataset_paths else ""
         observations.append({
             "tool": "_router",
             "observation": (
@@ -463,7 +482,7 @@ def _hint_first_tool(
     elif route.route == "retrieval" and registry.has("retrieve_corpus"):
         observations.append({
             "tool": "_router",
-            "observation": f"Router suggests: start with retrieve_corpus to find relevant knowledge.",
+            "observation": "Router suggests: start with retrieve_corpus to find relevant knowledge.",
         })
 
 
@@ -496,6 +515,14 @@ def _first_dataset_path(config: RuntimeConfig) -> str:
         if source.path and source.kind in {"dataset_dir", "local_dir"}:
             return str(Path(source.path))
     return ""
+
+
+def _all_dataset_paths(config: RuntimeConfig) -> list[str]:
+    return [
+        str(Path(source.path))
+        for source in config.sources
+        if source.path and source.kind in {"dataset_dir", "local_dir", "local_file"}
+    ]
 
 
 def make_react_decision(react_steps: list[ReActStep]) -> AgentDecision:
