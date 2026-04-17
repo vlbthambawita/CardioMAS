@@ -30,6 +30,14 @@ class LLMTrace(BaseModel):
     error: str = ""
 
 
+class AgentEvent(BaseModel):
+    type: str
+    stage: str = ""
+    message: str = ""
+    content: str = ""
+    data: dict = Field(default_factory=dict)
+
+
 class RepairTrace(BaseModel):
     tool_name: str
     action: str

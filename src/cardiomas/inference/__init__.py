@@ -1,5 +1,6 @@
 from cardiomas.inference.base import (
     ChatClient,
+    ChatChunk,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -17,6 +18,7 @@ from cardiomas.inference.ollama import (
 
 __all__ = [
     "ChatClient",
+    "ChatChunk",
     "ChatMessage",
     "ChatRequest",
     "ChatResponse",

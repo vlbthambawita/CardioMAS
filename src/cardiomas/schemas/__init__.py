@@ -11,11 +11,12 @@ from cardiomas.schemas.config import (
 )
 from cardiomas.schemas.evidence import Citation, EvidenceChunk, KnowledgeDocument
 from cardiomas.schemas.memory import MemoryPolicy, SessionMemory
-from cardiomas.schemas.runtime import AgentDecision, CorpusManifest, LLMTrace, PlanStep, QueryResult, RepairTrace
+from cardiomas.schemas.runtime import AgentDecision, AgentEvent, CorpusManifest, LLMTrace, PlanStep, QueryResult, RepairTrace
 from cardiomas.schemas.tools import ToolCallRecord, ToolResult, ToolSpec
 
 __all__ = [
     "AgentDecision",
+    "AgentEvent",
     "AutonomyConfig",
     "Citation",
     "CorpusManifest",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 import json
 import re
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 from cardiomas.inference.base import ChatClient, ChatRequest
 from cardiomas.inference.prompts import planner_messages, prompt_preview
 from cardiomas.schemas.config import RuntimeConfig
-from cardiomas.schemas.runtime import AgentDecision, LLMTrace, PlanStep
+from cardiomas.schemas.runtime import AgentDecision, AgentEvent, LLMTrace, PlanStep
 from cardiomas.tools.registry import ToolRegistry
 
 
@@ -17,20 +18,42 @@ def plan_query(
     registry: ToolRegistry,
     chat_client: ChatClient | None = None,
 ) -> tuple[AgentDecision, list[LLMTrace], list[str]]:
+    generator = plan_query_events(query, config, registry, chat_client=chat_client)
+    try:
+        while True:
+            next(generator)
+    except StopIteration as stop:
+        return stop.value
+
+
+def plan_query_events(
+    query: str,
+    config: RuntimeConfig,
+    registry: ToolRegistry,
+    chat_client: ChatClient | None = None,
+) -> Generator[AgentEvent, None, tuple[AgentDecision, list[LLMTrace], list[str]]]:
+    yield AgentEvent(type="status", stage="planner", message="Planning started.")
     if config.planner_uses_ollama and chat_client is not None and config.llm is not None:
-        return _plan_with_ollama(query, config, registry, chat_client)
+        result = yield from _plan_with_ollama_events(query, config, registry, chat_client)
+        yield AgentEvent(type="status", stage="planner", message=f"Planner completed with {len(result[0].steps)} step(s).")
+        return result
     if config.planner_uses_ollama and chat_client is None:
         decision = _heuristic_plan(query, config, registry)
-        return decision, [], ["Ollama planner was requested, but no chat client was available; using heuristic planner."]
-    return _heuristic_plan(query, config, registry), [], []
+        warning = "Ollama planner was requested, but no chat client was available; using heuristic planner."
+        yield AgentEvent(type="status", stage="planner", message=warning)
+        yield AgentEvent(type="status", stage="planner", message=f"Planner completed with {len(decision.steps)} step(s).")
+        return decision, [], [warning]
+    decision = _heuristic_plan(query, config, registry)
+    yield AgentEvent(type="status", stage="planner", message=f"Planner completed with {len(decision.steps)} step(s).")
+    return decision, [], []
 
 
-def _plan_with_ollama(
+def _plan_with_ollama_events(
     query: str,
     config: RuntimeConfig,
     registry: ToolRegistry,
     chat_client: ChatClient,
-) -> tuple[AgentDecision, list[LLMTrace], list[str]]:
+) -> Generator[AgentEvent, None, tuple[AgentDecision, list[LLMTrace], list[str]]]:
     assert config.llm is not None
     dataset_path = _first_dataset_path(config)
     urls = re.findall(r"https?://\S+", query)
@@ -45,29 +68,67 @@ def _plan_with_ollama(
     fallback = _heuristic_plan(query, config, registry)
 
     try:
-        response = chat_client.chat(
-            ChatRequest(
-                model=config.llm.resolved_planner_model,
-                messages=messages,
-                temperature=config.llm.temperature,
-                max_tokens=config.llm.max_tokens,
-                json_mode=True,
-                keep_alive=config.llm.keep_alive,
-            )
+        request = ChatRequest(
+            model=config.llm.resolved_planner_model,
+            messages=messages,
+            temperature=config.llm.temperature,
+            max_tokens=config.llm.max_tokens,
+            json_mode=True,
+            keep_alive=config.llm.keep_alive,
         )
-        trace.response_preview = _trim(response.content)
-        raw = _normalize_planner_payload(json.loads(response.content))
+        yield AgentEvent(
+            type="llm_stream_start",
+            stage="planner",
+            message="Planner LLM stream started.",
+            data={"model": config.llm.resolved_planner_model},
+        )
+        streamed_content = ""
+        for chunk in chat_client.chat_stream(request):
+            if chunk.content:
+                streamed_content += chunk.content
+                yield AgentEvent(
+                    type="llm_token",
+                    stage="planner",
+                    content=chunk.content,
+                    data={"model": chunk.model},
+                )
+        yield AgentEvent(
+            type="llm_stream_end",
+            stage="planner",
+            message="Planner LLM stream ended.",
+            data={"model": config.llm.resolved_planner_model},
+        )
+        trace.response_preview = _trim(streamed_content)
+        raw = _normalize_planner_payload(json.loads(streamed_content))
         decision = AgentDecision.model_validate(raw)
         sanitized = _sanitize_decision(decision, query, config, registry, dataset_path, urls, expression)
         if not sanitized.steps:
             trace.ok = False
             trace.error = "Planner response did not yield executable steps."
-            return fallback, [trace], ["Ollama planner returned no valid steps; using heuristic planner."]
+            warning = "Ollama planner returned no valid steps; using heuristic planner."
+            yield AgentEvent(type="status", stage="planner", message=warning)
+            return fallback, [trace], [warning]
         return sanitized, [trace], []
     except Exception as exc:
         trace.ok = False
         trace.error = str(exc)
-        return fallback, [trace], [f"Ollama planner failed; using heuristic planner. {exc}"]
+        warning = f"Ollama planner failed; using heuristic planner. {exc}"
+        yield AgentEvent(type="status", stage="planner", message=warning)
+        return fallback, [trace], [warning]
+
+
+def _plan_with_ollama(
+    query: str,
+    config: RuntimeConfig,
+    registry: ToolRegistry,
+    chat_client: ChatClient,
+) -> tuple[AgentDecision, list[LLMTrace], list[str]]:
+    generator = _plan_with_ollama_events(query, config, registry, chat_client)
+    try:
+        while True:
+            next(generator)
+    except StopIteration as stop:
+        return stop.value
 
 
 def _heuristic_plan(query: str, config: RuntimeConfig, registry: ToolRegistry) -> AgentDecision:

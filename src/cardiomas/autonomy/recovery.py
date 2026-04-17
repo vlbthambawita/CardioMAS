@@ -36,6 +36,9 @@ class AutonomousToolManager:
         self._traces = []
         return traces
 
+    def peek_traces(self) -> list[RepairTrace]:
+        return list(self._traces)
+
     def tool_specs(self) -> list[ToolSpec]:
         if not self.enabled:
             return []

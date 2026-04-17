@@ -121,6 +121,14 @@ cardiomas query "What labels are present in the dataset?" \
   --config examples/ollama/runtime_local.yaml
 ```
 
+Stream step-level events and live Ollama tokens:
+
+```bash
+cardiomas query "What labels are present in the dataset?" \
+  --config examples/ollama/runtime_local.yaml \
+  --live
+```
+
 Ask for generated statistics:
 
 ```bash
@@ -149,6 +157,7 @@ cardiomas inspect-tools --config examples/ollama/runtime_local.yaml
 - If `autonomy:` is enabled, CardioMAS writes generated tool packages and scripts under the autonomy workspace, verifies them, and records repair traces in query results.
 - Generated Python tools are limited to a safe import set and are re-generated when verification fails.
 - Shell scripts are written but not executed automatically.
+- `cardiomas query --live` streams step events such as planning, tool start/finish, repair traces, and raw LLM token chunks. Planner and responder token streams are structured JSON because those stages currently use JSON-constrained prompts.
 
 ## PTB-XL Example
 
@@ -173,4 +182,7 @@ cm.build_corpus()
 result = cm.query("Give me summary statistics for this dataset.")
 print(result["answer"])
 print(result["repair_traces"])
+
+for event in cm.query_stream("What labels are present in the dataset?"):
+    print(event["type"], event["stage"], event.get("message", ""), event.get("content", ""))
 ```

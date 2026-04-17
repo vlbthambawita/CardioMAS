@@ -105,3 +105,48 @@ def test_inspect_tools_shows_autonomous_tools_when_enabled(tmp_path):
     assert "dataset_statistics" in result.output
     assert "read_dataset_file" in result.output
     assert "generate_shell_script" in result.output
+
+
+def test_query_live_cli_renders_stream_events(tmp_path, monkeypatch):
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text("output_dir: output\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "cardiomas.cli.main.CardioMAS.query_stream",
+        lambda self, query, force_rebuild=False: iter(
+            [
+                {"type": "status", "stage": "planner", "message": "Planning started.", "content": "", "data": {}},
+                {"type": "tool_started", "stage": "tool", "message": "", "content": "", "data": {"tool_name": "retrieve_corpus"}},
+                {"type": "llm_stream_start", "stage": "responder", "message": "", "content": "", "data": {"model": "llama3.2"}},
+                {"type": "llm_token", "stage": "responder", "message": "", "content": '{"answer":"hi"}', "data": {"model": "llama3.2"}},
+                {"type": "llm_stream_end", "stage": "responder", "message": "", "content": "", "data": {"model": "llama3.2"}},
+                {
+                    "type": "final_result",
+                    "stage": "runtime",
+                    "message": "done",
+                    "content": "",
+                    "data": {
+                        "result": {
+                            "session_id": "s1",
+                            "query": "q",
+                            "answer": "Final answer",
+                            "decision": {"strategy": "single_tool", "steps": [], "notes": []},
+                            "citations": [],
+                            "evidence": [],
+                            "tool_calls": [],
+                            "warnings": [],
+                            "llm_traces": [],
+                            "repair_traces": [],
+                        }
+                    },
+                },
+            ]
+        ),
+    )
+
+    result = runner.invoke(app, ["query", "q", "--config", str(config_path), "--live"])
+
+    assert result.exit_code == 0
+    assert "Planning started." in result.output
+    assert "retrieve_corpus started" in result.output
+    assert "Final answer" in result.output

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 import json
 
 from pydantic import BaseModel, Field
@@ -8,7 +9,7 @@ from cardiomas.inference.base import ChatClient, ChatRequest
 from cardiomas.inference.prompts import prompt_preview, responder_messages
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.evidence import Citation, EvidenceChunk
-from cardiomas.schemas.runtime import LLMTrace
+from cardiomas.schemas.runtime import AgentEvent, LLMTrace
 
 
 class _ResponderPayload(BaseModel):
@@ -25,23 +26,46 @@ def compose_answer(
     warnings: list[str],
     chat_client: ChatClient | None = None,
 ) -> tuple[str, list[Citation], list[LLMTrace], list[str]]:
+    generator = compose_answer_events(query, config, evidence, aggregate, warnings, chat_client=chat_client)
+    try:
+        while True:
+            next(generator)
+    except StopIteration as stop:
+        return stop.value
+
+
+def compose_answer_events(
+    query: str,
+    config: RuntimeConfig,
+    evidence: list[EvidenceChunk],
+    aggregate: dict,
+    warnings: list[str],
+    chat_client: ChatClient | None = None,
+) -> Generator[AgentEvent, None, tuple[str, list[Citation], list[LLMTrace], list[str]]]:
+    yield AgentEvent(type="status", stage="responder", message="Response synthesis started.")
     if config.responder_uses_ollama and chat_client is not None and config.llm is not None:
-        return _compose_with_ollama(query, config, evidence, aggregate, warnings, chat_client)
+        result = yield from _compose_with_ollama_events(query, config, evidence, aggregate, warnings, chat_client)
+        yield AgentEvent(type="status", stage="responder", message="Response synthesis finished.")
+        return result
     if config.responder_uses_ollama and chat_client is None:
         answer, citations = _compose_deterministic(query, config, evidence, aggregate, warnings)
-        return answer, citations, [], ["Ollama responder was requested, but no chat client was available; using deterministic responder."]
+        warning = "Ollama responder was requested, but no chat client was available; using deterministic responder."
+        yield AgentEvent(type="status", stage="responder", message=warning)
+        yield AgentEvent(type="status", stage="responder", message="Response synthesis finished.")
+        return answer, citations, [], [warning]
     answer, citations = _compose_deterministic(query, config, evidence, aggregate, warnings)
+    yield AgentEvent(type="status", stage="responder", message="Response synthesis finished.")
     return answer, citations, [], []
 
 
-def _compose_with_ollama(
+def _compose_with_ollama_events(
     query: str,
     config: RuntimeConfig,
     evidence: list[EvidenceChunk],
     aggregate: dict,
     warnings: list[str],
     chat_client: ChatClient,
-) -> tuple[str, list[Citation], list[LLMTrace], list[str]]:
+) -> Generator[AgentEvent, None, tuple[str, list[Citation], list[LLMTrace], list[str]]]:
     assert config.llm is not None
     messages = responder_messages(query, evidence[: config.response.max_citations], aggregate, warnings)
     trace = LLMTrace(
@@ -52,18 +76,38 @@ def _compose_with_ollama(
     )
 
     try:
-        response = chat_client.chat(
-            ChatRequest(
-                model=config.llm.resolved_responder_model,
-                messages=messages,
-                temperature=config.llm.temperature,
-                max_tokens=config.llm.max_tokens,
-                json_mode=True,
-                keep_alive=config.llm.keep_alive,
-            )
+        request = ChatRequest(
+            model=config.llm.resolved_responder_model,
+            messages=messages,
+            temperature=config.llm.temperature,
+            max_tokens=config.llm.max_tokens,
+            json_mode=True,
+            keep_alive=config.llm.keep_alive,
         )
-        trace.response_preview = _trim(response.content)
-        payload = _ResponderPayload.model_validate(json.loads(response.content))
+        yield AgentEvent(
+            type="llm_stream_start",
+            stage="responder",
+            message="Responder LLM stream started.",
+            data={"model": config.llm.resolved_responder_model},
+        )
+        streamed_content = ""
+        for chunk in chat_client.chat_stream(request):
+            if chunk.content:
+                streamed_content += chunk.content
+                yield AgentEvent(
+                    type="llm_token",
+                    stage="responder",
+                    content=chunk.content,
+                    data={"model": chunk.model},
+                )
+        yield AgentEvent(
+            type="llm_stream_end",
+            stage="responder",
+            message="Responder LLM stream ended.",
+            data={"model": config.llm.resolved_responder_model},
+        )
+        trace.response_preview = _trim(streamed_content)
+        payload = _ResponderPayload.model_validate(json.loads(streamed_content))
         answer = payload.answer.strip()
         if not answer:
             raise ValueError("Responder returned an empty answer.")
@@ -74,7 +118,24 @@ def _compose_with_ollama(
         trace.error = str(exc)
         answer, citations = _compose_deterministic(query, config, evidence, aggregate, warnings)
         fallback_warning = f"Ollama responder failed; using deterministic responder. {exc}"
+        yield AgentEvent(type="status", stage="responder", message=fallback_warning)
         return answer, citations, [trace], [fallback_warning]
+
+
+def _compose_with_ollama(
+    query: str,
+    config: RuntimeConfig,
+    evidence: list[EvidenceChunk],
+    aggregate: dict,
+    warnings: list[str],
+    chat_client: ChatClient,
+) -> tuple[str, list[Citation], list[LLMTrace], list[str]]:
+    generator = _compose_with_ollama_events(query, config, evidence, aggregate, warnings, chat_client)
+    try:
+        while True:
+            next(generator)
+    except StopIteration as stop:
+        return stop.value
 
 
 def _compose_deterministic(

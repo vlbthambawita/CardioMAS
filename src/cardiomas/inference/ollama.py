@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from typing import Any
 
 import requests
 
 from cardiomas.inference.base import (
     ChatClient,
+    ChatChunk,
     ChatRequest,
     ChatResponse,
     EmbeddingClient,
@@ -44,6 +47,43 @@ class _OllamaTransport:
         if not isinstance(data, dict):
             raise OllamaError(f"Malformed response from Ollama at {url}: expected a JSON object.")
         return data
+
+    def request_json_lines(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        url = f"{self.base_url}{path}"
+        try:
+            response = self._session.request(
+                method=method,
+                url=url,
+                json=payload,
+                timeout=self.timeout_seconds,
+                stream=True,
+            )
+        except requests.RequestException as exc:
+            raise OllamaError(f"Could not connect to Ollama at {self.base_url}: {exc}") from exc
+
+        if response.status_code >= 400:
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+            error_message = data.get("error") if isinstance(data, dict) else response.text
+            raise OllamaError(f"Ollama returned HTTP {response.status_code}: {error_message}")
+
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise OllamaError(f"Malformed streamed JSON response from Ollama at {url}.") from exc
+            if not isinstance(item, dict):
+                raise OllamaError(f"Malformed streamed response from Ollama at {url}: expected a JSON object.")
+            yield item
 
     def list_models(self) -> list[ModelInfo]:
         payload = self.request_json("GET", "/api/tags")
@@ -105,6 +145,35 @@ class OllamaChatClient(ChatClient):
         if not isinstance(content, str):
             raise OllamaError("Malformed Ollama chat response: message content was not a string.")
         return ChatResponse(model=str(response.get("model", request.model)), content=content, raw=response)
+
+    def chat_stream(self, request: ChatRequest) -> Iterator[ChatChunk]:
+        options: dict[str, Any] = {"temperature": request.temperature}
+        if request.max_tokens > 0:
+            options["num_predict"] = request.max_tokens
+
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "messages": [message.model_dump(mode="json") for message in request.messages],
+            "stream": True,
+            "keep_alive": request.keep_alive or self.config.keep_alive,
+            "options": options,
+        }
+        if request.json_mode:
+            payload["format"] = "json"
+
+        for item in self._transport.request_json_lines("POST", "/api/chat", payload=payload):
+            message = item.get("message", {})
+            content = ""
+            if isinstance(message, dict):
+                raw_content = message.get("content", "")
+                if isinstance(raw_content, str):
+                    content = raw_content
+            yield ChatChunk(
+                model=str(item.get("model", request.model)),
+                content=content,
+                done=bool(item.get("done", False)),
+                raw=item,
+            )
 
 
 class OllamaEmbeddingClient(EmbeddingClient):

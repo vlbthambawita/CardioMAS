@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,13 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     model: str
     content: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatChunk(BaseModel):
+    model: str
+    content: str = ""
+    done: bool = False
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -49,6 +57,10 @@ class ChatClient(ABC):
 
     @abstractmethod
     def chat(self, request: ChatRequest) -> ChatResponse: ...
+
+    def chat_stream(self, request: ChatRequest) -> Iterator[ChatChunk]:
+        response = self.chat(request)
+        yield ChatChunk(model=response.model, content=response.content, done=True, raw=response.raw)
 
 
 class EmbeddingClient(ABC):

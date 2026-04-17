@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from cardiomas.agentic.runtime import AgenticRuntime
@@ -23,6 +24,10 @@ class CardioMAS:
 
     def query(self, query: str, force_rebuild: bool = False) -> dict[str, Any]:
         return self.runtime.query(query, force_rebuild=force_rebuild).model_dump(mode="json")
+
+    def query_stream(self, query: str, force_rebuild: bool = False) -> Iterator[dict[str, Any]]:
+        for event in self.runtime.query_stream(query, force_rebuild=force_rebuild):
+            yield event.model_dump(mode="json")
 
     def inspect_tools(self) -> list[dict[str, Any]]:
         return [spec.model_dump(mode="json") for spec in self.runtime.inspect_tools()]
