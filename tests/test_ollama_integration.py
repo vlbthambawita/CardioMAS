@@ -102,7 +102,7 @@ def test_runtime_query_can_use_ollama_planner_and_responder(monkeypatch, tmp_pat
     notes_path.write_text("Known labels in this dataset are NORM and AFIB.", encoding="utf-8")
     chat_client = _StubChatClient(
         responses=[
-            '{"strategy":"single_tool","steps":[{"tool_name":"retrieve_corpus","reason":"Ground the answer","args":{}}],"notes":[]}',
+            '{"strategy":"single_tool","steps":[{"tool_name":"retrieve_corpus","reason":"Ground the answer","args":{}}],"notes":"Use retrieval first"}',
             '{"answer":"The dataset includes NORM and AFIB labels.","citations":[1],"warnings":[]}',
         ]
     )
@@ -121,6 +121,7 @@ def test_runtime_query_can_use_ollama_planner_and_responder(monkeypatch, tmp_pat
     assert len(result.llm_traces) == 2
     assert all(trace.ok for trace in result.llm_traces)
     assert result.citations
+    assert result.decision.notes == ["Use retrieval first"]
 
 
 def test_runtime_query_falls_back_when_ollama_outputs_invalid_json(monkeypatch, tmp_path):

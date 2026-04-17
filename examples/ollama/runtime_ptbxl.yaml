@@ -11,7 +11,7 @@ llm:
   provider: ollama
   base_url: http://localhost:11434
   planner_mode: ollama
-  model: llama3.2
+  model: gemma4:latest
   temperature: 0.1
   max_tokens: 900
 embeddings:

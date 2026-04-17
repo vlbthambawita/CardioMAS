@@ -13,7 +13,8 @@ from cardiomas.schemas.config import KnowledgeSource
 from cardiomas.schemas.evidence import KnowledgeDocument
 
 
-DEFAULT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".pdf"}
+DEFAULT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".pdf", ".html"}
+DATASET_SKIP_FILENAMES = {"license.txt", "sha256sums.txt"}
 
 
 def load_source(source: KnowledgeSource) -> list[KnowledgeDocument]:
@@ -38,31 +39,38 @@ def _load_directory(source: KnowledgeSource) -> list[KnowledgeDocument]:
     for path in sorted(paths):
         if not path.is_file():
             continue
+        if source.kind == "dataset_dir" and path.name.lower() in DATASET_SKIP_FILENAMES:
+            continue
+        if source.kind == "dataset_dir" and path.suffix.lower() == ".html" and len(path.relative_to(root).parts) > 2:
+            continue
         if path.suffix.lower() not in allowed:
             continue
         if path.suffix.lower() == ".pdf":
             docs.append(_load_pdf_document(source, path))
+        elif path.suffix.lower() == ".html":
+            docs.append(_load_local_html_document(source, path, root))
         else:
-            docs.append(_load_file_document(source, path))
+            docs.append(_load_file_document(source, path, root=root))
     return docs
 
 
-def _load_file_document(source: KnowledgeSource, path: Path) -> KnowledgeDocument:
+def _load_file_document(source: KnowledgeSource, path: Path, root: Path | None = None) -> KnowledgeDocument:
+    relative_path = str(path.relative_to(root)) if root is not None else path.name
     if path.suffix.lower() == ".csv":
-        text = _csv_as_text(path)
+        text = _csv_as_text(path, relative_path)
     elif path.suffix.lower() == ".json":
-        text = json.dumps(json.loads(path.read_text(encoding="utf-8")), indent=2)
+        text = f"JSON file: {relative_path}\n" + json.dumps(json.loads(path.read_text(encoding="utf-8")), indent=2)
     else:
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = f"File: {relative_path}\n" + path.read_text(encoding="utf-8", errors="ignore")
     return KnowledgeDocument(
-        doc_id=f"{source.id}:{path.name}",
+        doc_id=f"{source.id}:{relative_path}",
         source_id=source.id,
         source_label=source.label,
         source_type=source.kind,
         uri=str(path),
-        title=path.name,
+        title=relative_path,
         content=text,
-        metadata={"path": str(path)},
+        metadata={"path": str(path), "relative_path": relative_path},
     )
 
 
@@ -109,11 +117,37 @@ def _load_web_document(source: KnowledgeSource, url: str) -> KnowledgeDocument:
     )
 
 
-def _csv_as_text(path: Path) -> str:
+def _load_local_html_document(source: KnowledgeSource, path: Path, root: Path) -> KnowledgeDocument:
+    html = path.read_text(encoding="utf-8", errors="ignore")
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "iframe"]):
+        tag.decompose()
+    relative_path = str(path.relative_to(root))
+    title = soup.title.get_text(strip=True) if soup.title else relative_path
+    text = " ".join(soup.get_text(separator=" ").split())
+    return KnowledgeDocument(
+        doc_id=f"{source.id}:{relative_path}",
+        source_id=source.id,
+        source_label=source.label,
+        source_type=source.kind,
+        uri=str(path),
+        title=relative_path,
+        content=f"HTML file: {relative_path}\nTitle: {title}\n{text}",
+        metadata={"path": str(path), "relative_path": relative_path, "html_title": title},
+    )
+
+
+def _csv_as_text(path: Path, relative_path: str) -> str:
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
         rows = list(_take(reader, 25))
-    return "\n".join(", ".join(cell for cell in row) for row in rows)
+    headers = rows[0] if rows else []
+    body = "\n".join(", ".join(cell for cell in row) for row in rows[1:])
+    return (
+        f"CSV file: {relative_path}\n"
+        f"Columns: {', '.join(headers) if headers else '(none)'}\n"
+        f"Sample rows:\n{body}"
+    ).strip()
 
 
 def _take(items: Iterable[list[str]], limit: int) -> list[list[str]]:

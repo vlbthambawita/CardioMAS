@@ -56,7 +56,7 @@ def _plan_with_ollama(
             )
         )
         trace.response_preview = _trim(response.content)
-        raw = json.loads(response.content)
+        raw = _normalize_planner_payload(json.loads(response.content))
         decision = AgentDecision.model_validate(raw)
         sanitized = _sanitize_decision(decision, query, config, registry, dataset_path, urls, expression)
         if not sanitized.steps:
@@ -174,6 +174,28 @@ def _safe_top_k(value: object, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _normalize_planner_payload(payload: object) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Planner response must be a JSON object.")
+
+    normalized = dict(payload)
+    notes = normalized.get("notes", [])
+    if notes is None:
+        normalized["notes"] = []
+    elif isinstance(notes, str):
+        normalized["notes"] = [notes]
+    elif not isinstance(notes, list):
+        normalized["notes"] = [str(notes)]
+
+    steps = normalized.get("steps", [])
+    if isinstance(steps, dict):
+        normalized["steps"] = [steps]
+    elif not isinstance(steps, list):
+        normalized["steps"] = []
+
+    return normalized
 
 
 def _trim(text: str, limit: int = 240) -> str:
