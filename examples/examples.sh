@@ -8,3 +8,6 @@ cardiomas build-corpus --config examples/ollama/ptbxl_react.yaml --force
 cardiomas check-ollama --config examples/ollama/ptbxl_react.yaml
 cardiomas query "What labels are present in the dataset?" --config examples/ollama/ptbxl_react.yaml --live
 cardiomas query "how many unique patients in this dataset" --config examples/ollama/ptbxl_react.yaml --live
+
+cardiomas query "how many unique patients in this dataset" --config examples/ollama/ptbxl_qwen3_thinking.yaml --live
+cardiomas query "how many unique patients in this dataset" --config examples/ollama/ptbxl_gemma4_26b.yaml --live
