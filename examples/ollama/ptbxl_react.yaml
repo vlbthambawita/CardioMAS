@@ -29,7 +29,7 @@ llm:
 
 agent:
   mode: react                   # ReAct loop instead of linear planner→executor
-  max_iterations: 6             # max think-act-observe cycles per sub-query
+  max_iterations: 10             # max think-act-observe cycles per sub-query
   query_decomposition: false    # set true to split "A and B?" into two sub-queries
   self_reflection: true         # grade the final answer for hallucination
   retrieval_grading: true       # grade retrieved chunks; loop back if insufficient

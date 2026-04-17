@@ -8,8 +8,8 @@ from cardiomas.schemas.tools import ToolResult
 _FOLDER_TREE_MAX_FILES = 200  # cap to avoid flooding the context window
 
 
-def list_folder_structure(dataset_path: str, max_depth: int = 4) -> ToolResult:
-    """Return a human-readable tree of the directory layout at *dataset_path*.
+def list_folder_structure(path: str, max_depth: int = 4) -> ToolResult:
+    """Return a human-readable tree of the directory layout at *path*.
 
     Walks the directory up to *max_depth* levels deep and lists every file and
     sub-directory. For each CSV/TSV file found it also reads the header row so
@@ -24,7 +24,7 @@ def list_folder_structure(dataset_path: str, max_depth: int = 4) -> ToolResult:
     read or which analysis script to generate.
 
     Args:
-        dataset_path: Absolute or relative path to the root directory to inspect.
+        path: Absolute or relative path to the root directory to inspect.
         max_depth: How many directory levels to descend (default 4).
 
     Returns:
@@ -32,20 +32,20 @@ def list_folder_structure(dataset_path: str, max_depth: int = 4) -> ToolResult:
         ``data`` dict exposes ``tree_lines``, ``total_files``,
         ``total_dirs``, ``csv_headers``, and ``truncated`` for programmatic use.
     """
-    root = Path(dataset_path)
+    root = Path(path)
     if not root.exists():
         return ToolResult(
             tool_name="list_folder_structure",
             ok=False,
             summary="",
-            error=f"Path not found: {dataset_path}",
+            error=f"Path not found: {path}",
         )
     if not root.is_dir():
         return ToolResult(
             tool_name="list_folder_structure",
             ok=False,
             summary="",
-            error=f"Path is not a directory: {dataset_path}",
+            error=f"Path is not a directory: {path}",
         )
 
     tree_lines: list[str] = [f"{root.name}/"]
@@ -110,7 +110,7 @@ def list_folder_structure(dataset_path: str, max_depth: int = 4) -> ToolResult:
         ok=True,
         summary=summary,
         data={
-            "dataset_path": str(root),
+            "path": str(root),
             "tree_lines": tree_lines,
             "total_files": total_files,
             "total_dirs": total_dirs,
@@ -120,12 +120,12 @@ def list_folder_structure(dataset_path: str, max_depth: int = 4) -> ToolResult:
     )
 
 
-def inspect_dataset(dataset_path: str) -> ToolResult:
-    root = Path(dataset_path)
+def inspect_dataset(path: str) -> ToolResult:
+    root = Path(path)
     if not root.exists():
-        return ToolResult(tool_name="inspect_dataset", ok=False, summary="", error=f"Dataset path not found: {dataset_path}")
+        return ToolResult(tool_name="inspect_dataset", ok=False, summary="", error=f"Dataset path not found: {path}")
     if not root.is_dir():
-        return ToolResult(tool_name="inspect_dataset", ok=False, summary="", error=f"Dataset path is not a directory: {dataset_path}")
+        return ToolResult(tool_name="inspect_dataset", ok=False, summary="", error=f"Dataset path is not a directory: {path}")
 
     files = sorted(path for path in root.rglob("*") if path.is_file())
     extension_counts: dict[str, int] = {}
@@ -147,7 +147,7 @@ def inspect_dataset(dataset_path: str) -> ToolResult:
         ok=True,
         summary=summary,
         data={
-            "dataset_path": str(root),
+            "path": str(root),
             "total_files": len(files),
             "extension_counts": extension_counts,
             "csv_headers": csv_headers,

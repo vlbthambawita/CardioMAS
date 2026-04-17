@@ -32,7 +32,7 @@ _ANNOTATION_EXTENSIONS = {
 }
 
 
-def read_wfdb_dataset(dataset_path: str, max_records: int = _MAX_DETAIL_RECORDS) -> ToolResult:
+def read_wfdb_dataset(path: str, max_records: int = _MAX_DETAIL_RECORDS) -> ToolResult:
     """Inspect a WFDB-format ECG dataset directory and return structured metadata.
 
     WFDB (WaveForm DataBase) is the standard file format used by PhysioNet
@@ -61,7 +61,7 @@ def read_wfdb_dataset(dataset_path: str, max_records: int = _MAX_DETAIL_RECORDS)
       for downstream computation.
 
     Args:
-        dataset_path: Path to the root directory of the WFDB dataset. May be a
+        path: Path to the root directory of the WFDB dataset. May be a
             flat directory (all ``.hea`` files at the top level) or a nested
             one (one sub-directory per record, as in PTB-XL).
         max_records: Maximum number of records to parse in detail. The total
@@ -82,20 +82,20 @@ def read_wfdb_dataset(dataset_path: str, max_records: int = _MAX_DETAIL_RECORDS)
         - ``sample_records`` — list of per-record dicts for the first few records
         - ``wfdb_library_used`` — whether the wfdb Python library was used
     """
-    root = Path(dataset_path)
+    root = Path(path)
     if not root.exists():
         return ToolResult(
             tool_name="read_wfdb_dataset",
             ok=False,
             summary="",
-            error=f"Path not found: {dataset_path}",
+            error=f"Path not found: {path}",
         )
     if not root.is_dir():
         return ToolResult(
             tool_name="read_wfdb_dataset",
             ok=False,
             summary="",
-            error=f"Path is not a directory: {dataset_path}",
+            error=f"Path is not a directory: {path}",
         )
 
     hea_files = sorted(root.rglob("*.hea"))
@@ -105,7 +105,7 @@ def read_wfdb_dataset(dataset_path: str, max_records: int = _MAX_DETAIL_RECORDS)
             ok=False,
             summary="",
             error=(
-                f"No WFDB header files (.hea) found under {dataset_path}. "
+                f"No WFDB header files (.hea) found under {path}. "
                 "This directory does not appear to contain a WFDB dataset."
             ),
         )
@@ -243,7 +243,7 @@ def read_wfdb_dataset(dataset_path: str, max_records: int = _MAX_DETAIL_RECORDS)
         ok=True,
         summary=summary,
         data={
-            "dataset_path": str(root),
+            "path": str(root),
             "total_records": total_records,
             "records_inspected": len(detail_files),
             "signal_names": unique_sig_names,
