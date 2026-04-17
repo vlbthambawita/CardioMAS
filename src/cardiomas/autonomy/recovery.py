@@ -20,6 +20,7 @@ from cardiomas.coding.tool_builder import (
     build_generated_tool_package,
     build_standalone_script,
 )
+from cardiomas.inference.base import ChatClient
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.evidence import EvidenceChunk
 from cardiomas.schemas.runtime import RepairTrace
@@ -31,8 +32,9 @@ SHELL_ARTIFACT_TOOL_NAME = "generate_shell_artifact"
 
 
 class AutonomousToolManager:
-    def __init__(self, config: RuntimeConfig) -> None:
+    def __init__(self, config: RuntimeConfig, chat_client: ChatClient | None = None) -> None:
         self.config = config
+        self.chat_client = chat_client
         self.workspace = AutonomyWorkspace(config)
         self._traces: list[RepairTrace] = []
         self._session_id = ""
@@ -99,6 +101,7 @@ class AutonomousToolManager:
     def _write_standalone_script(self, task: str, dataset_path: str) -> ToolResult:
         max_attempts = self.config.autonomy.max_repair_attempts + 1
         last_error = ""
+        last_code = ""
         for attempt in range(1, max_attempts + 1):
             trace = RepairTrace(
                 tool_name=PYTHON_ARTIFACT_TOOL_NAME,
@@ -107,7 +110,15 @@ class AutonomousToolManager:
                 workspace_path=str(self.workspace.scripts_output_dir()),
             )
             try:
-                script = build_standalone_script(task, dataset_path, self.config, last_error=last_error)
+                script = build_standalone_script(
+                    task,
+                    dataset_path,
+                    self.config,
+                    last_error=last_error,
+                    previous_code=last_code,
+                    chat_client=self.chat_client,
+                )
+                last_code = script.code
                 errors = _verify_standalone_script(script.code, self.config)
                 trace.verification = errors or ["syntax OK"]
                 if errors:

@@ -110,8 +110,11 @@ class LLMConfig(BaseModel):
     model: str = ""
     planner_model: str = ""
     responder_model: str = ""
+    code_model: str = ""
     temperature: float = 0.1
     max_tokens: int = 800
+    code_max_tokens: int = 4000
+    code_temperature: float = 0.2
     timeout_seconds: float = 60.0
     keep_alive: str = "5m"
 
@@ -122,6 +125,10 @@ class LLMConfig(BaseModel):
     @property
     def resolved_responder_model(self) -> str:
         return self.responder_model or self.model
+
+    @property
+    def resolved_code_model(self) -> str:
+        return self.code_model or self.model
 
     @property
     def planner_enabled(self) -> bool:

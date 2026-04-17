@@ -6,10 +6,13 @@ import hashlib
 import json
 from pathlib import Path
 import textwrap
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.tools import ToolSpec
+
+if TYPE_CHECKING:
+    from cardiomas.inference.base import ChatClient
 
 
 @dataclass(slots=True)
@@ -562,21 +565,37 @@ def build_standalone_script(
     dataset_path: str,
     config: RuntimeConfig,
     last_error: str = "",
+    previous_code: str = "",
+    chat_client: ChatClient | None = None,
 ) -> StandaloneScript:
     mode = _infer_mode(task, "")
     script_name = _script_name(task, dataset_path)
     output_dir = config.resolved_scripts_dir / "outputs"
     description = f"Analyse dataset at {dataset_path!r} for: {task[:80]}"
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    code = _render_standalone_script_source(
-        task=task,
-        dataset_path=dataset_path,
-        output_dir=output_dir,
-        mode=mode,
-        script_name=script_name,
-        timestamp=timestamp,
-        last_error=last_error,
-    )
+
+    if chat_client is not None:
+        from cardiomas.coding.llm_coder import synthesize_script
+        code = synthesize_script(
+            task=task,
+            dataset_path=dataset_path,
+            output_dir=str(output_dir),
+            config=config,
+            chat_client=chat_client,
+            last_error=last_error,
+            previous_code=previous_code,
+        )
+    else:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        code = _render_standalone_script_source(
+            task=task,
+            dataset_path=dataset_path,
+            output_dir=output_dir,
+            mode=mode,
+            script_name=script_name,
+            timestamp=timestamp,
+            last_error=last_error,
+        )
+
     return StandaloneScript(
         script_name=script_name,
         code=code,

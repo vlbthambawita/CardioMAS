@@ -94,6 +94,40 @@ safety:
   allow_web_fetch: false
 ```
 
+Script-first dataset query example (Phase 1 — write script, user runs it):
+
+```yaml
+system_name: CardioMAS
+output_dir: runtime_output/script-mode
+sources:
+  - kind: dataset_dir
+    path: /path/to/your/dataset
+    label: my-dataset
+scripts_dir: runtime_output/scripts        # flat, user-accessible script location
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  dataset_mode: script_only                # route all dataset queries to script generation
+  max_repair_attempts: 2
+tools:
+  enabled:
+    - generate_python_artifact
+```
+
+Script-first with auto-execution (Phase 2 — run script, synthesize answer from output):
+
+```yaml
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  dataset_mode: script_only
+  execute_for_answer: true                 # execute the script and feed stdout to the responder
+  execution_timeout_seconds: 60            # subprocess timeout in seconds
+  require_approval_for_shell_execution: false   # must be false for auto-execution
+  max_repair_attempts: 2
+scripts_dir: runtime_output/scripts
+```
+
 Ready-to-run examples:
 
 - `examples/agentic_rag_demo/runtime.yaml`
@@ -149,12 +183,59 @@ Inspect enabled tools:
 cardiomas inspect-tools --config examples/ollama/runtime_local.yaml
 ```
 
+## dataset_mode: script_only
+
+When `autonomy.dataset_mode` is set to `script_only`, every query that involves a configured dataset generates a standalone Python script instead of attempting to answer directly from corpus retrieval or inspection tools.
+
+**Phase 1 (default)** — the script is written to `scripts_dir` and the agent tells you where it is and how to run it. No execution happens inside the agent.
+
+```
+runtime_output/scripts/
+  count-unique-patients_82c4092a.py   ← run with: python count-unique-patients_82c4092a.py
+  outputs/
+    results.json                      ← written when you run the script
+```
+
+**Phase 2** — set `execute_for_answer: true` (and `require_approval_for_shell_execution: false`) to have the agent run the script automatically, capture its stdout, and synthesize a direct answer from the computed output. The script is still written to `scripts_dir` so you can inspect or re-run it. If execution fails, the agent regenerates the script up to `max_repair_attempts` times using the error output as context.
+
+### LLM-driven code synthesis
+
+When `llm:` is configured, each query generates a **different, purpose-built script** using a three-step pipeline:
+
+1. **Dataset discovery** — scans the dataset directory and reads actual column names from CSV/TSV files (no LLM)
+2. **Computation planning** — LLM reasons about which files and columns to use for the specific query
+3. **Code synthesis** — LLM writes the complete Python script, grounded in real column names
+4. **Repair** — on execution failure, LLM sees the broken code and the real error message and fixes it
+
+```yaml
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  planner_mode: heuristic       # planner stays heuristic; only code synthesis calls Ollama
+  model: gemma3:4b
+  code_max_tokens: 4000         # scripts need more tokens than 800-token JSON responses
+  code_temperature: 0.2
+```
+
+> `code_max_tokens` defaults to 4000. The standard `max_tokens: 800` is for the JSON-constrained planner and responder — it is too small for a full Python script.
+
+When `llm:` is **not** configured, a generic template is used as fallback (same code structure for every query).
+
+Generated scripts:
+
+- Are standalone (`python script.py` works with no arguments).
+- Hardcode `DATASET_PATH` and `OUTPUT_DIR` from the config.
+- Write `results.json` to the `outputs/` subdirectory.
+- When LLM-generated: read the specific files and columns required by the query.
+- Are verified with `ast.parse()` before being saved.
+
 ## Behavior
 
 - If `embeddings:` is configured and Ollama is reachable, corpus chunks are stored with embedding vectors and dense or hybrid retrieval uses them.
 - If `llm:` is configured, the responder uses Ollama for grounded answer synthesis.
 - If `llm.planner_mode: ollama`, the planner can choose autonomous tools such as `generate_python_artifact` and `generate_shell_artifact`.
-- If `autonomy:` is enabled, CardioMAS writes each generated artifact under `autonomy_workspace/sessions/<session_id>/<artifact_slug>/`, stores `prompt.json` and `context.json`, verifies the code, records per-attempt run logs, and reports repair traces in query results.
+- If `autonomy.dataset_mode: script_only`, the planner routes all dataset queries exclusively to `generate_python_artifact`; corpus retrieval and inspection tools are not used for those queries.
+- If `autonomy:` is enabled (agentic mode), CardioMAS writes each generated artifact under `autonomy_workspace/sessions/<session_id>/<artifact_slug>/`, stores `prompt.json` and `context.json`, verifies the code, records per-attempt run logs, and reports repair traces in query results.
 - `generate_python_artifact` is the main dynamic path for dataset file reading, metadata extraction, and statistical analysis; the runtime does not expose ECG-specific built-in analysis tools.
 - Generated Python artifacts are limited to a safe import set and are re-generated when verification fails.
 - Shell artifacts are saved in the same workspace and execute only when policy allows it.
@@ -171,6 +252,18 @@ cardiomas query "Summarize the PTB-XL dataset structure and metadata columns." \
   --config examples/ollama/runtime_ptbxl.yaml
 cardiomas query "Give me summary statistics for this dataset." \
   --config examples/ollama/runtime_ptbxl.yaml
+```
+
+With `dataset_mode: script_only` the agent generates a ready-to-run script instead of guessing the answer:
+
+```bash
+cardiomas query "How many unique patients are in this dataset?" \
+  --config examples/ollama/runtime_ptbxl.yaml
+# → Scripts Generated
+# →   count-unique-patients_82c4092a.py
+# →   Path: runtime_output/scripts/count-unique-patients_82c4092a.py
+# →   Run:  python runtime_output/scripts/count-unique-patients_82c4092a.py
+python runtime_output/scripts/count-unique-patients_82c4092a.py
 ```
 
 ## Python API

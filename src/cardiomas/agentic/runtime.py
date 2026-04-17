@@ -22,7 +22,7 @@ class AgenticRuntime:
         self.sessions = SessionStore()
         self._chat_client = build_chat_client(config.llm)
         self._embedding_client = build_embedding_client(config.embeddings)
-        self._autonomy_manager = AutonomousToolManager(config)
+        self._autonomy_manager = AutonomousToolManager(config, chat_client=self._chat_client)
 
     def build_corpus(self, force_rebuild: bool = False) -> CorpusManifest:
         if force_rebuild or not self.config.corpus_path.exists():

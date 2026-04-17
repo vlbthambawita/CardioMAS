@@ -1,3 +1,4 @@
-cardiomas build-corpus --config examples/ollama/runtime_ptbxl.yaml --force
-cardiomas check-ollama --config examples/ollama/runtime_ptbxl.yaml
-cardiomas query "What labels are present in the dataset?" --config examples/ollama/runtime_ptbxl.yaml --live
+cardiomas build-corpus --config examples/ollama/ptbxl_code_only.yaml --force
+cardiomas check-ollama --config examples/ollama/ptbxl_code_only.yaml
+cardiomas query "What labels are present in the dataset?" --config examples/ollama/ptbxl_code_only.yaml --live
+cardiomas query "how many unique patients in this dataset" --config examples/ollama/ptbxl_code_only.yaml --live

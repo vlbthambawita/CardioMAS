@@ -1,0 +1,22 @@
+system_name: CardioMAS
+output_dir: runtime_output/script-mode/ptbxl
+sources:
+  - kind: dataset_dir
+    path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
+    label: ptbxl
+scripts_dir: runtime_output/scripts/ptbxl        # flat, user-accessible script location
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  planner_mode: heuristic          # planner stays heuristic; only code synthesis uses LLM
+  model: gemma3:4b
+  code_max_tokens: 4000            # scripts need more tokens than JSON planner responses
+  code_temperature: 0.2
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  dataset_mode: script_only                # route all dataset queries to script generation
+  max_repair_attempts: 2
+tools:
+  enabled:
+    - generate_python_artifact
