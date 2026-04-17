@@ -70,6 +70,16 @@ class ResponseConfig(BaseModel):
     max_citations: int = 5
 
 
+class AgentConfig(BaseModel):
+    mode: Literal["react", "linear"] = "linear"
+    max_iterations: int = 5
+    query_decomposition: bool = False
+    self_reflection: bool = False
+    retrieval_grading: bool = True
+    memory_mode: Literal["session", "persistent", "none"] = "session"
+    persistent_memory_max: int = 200
+
+
 class AutonomyConfig(BaseModel):
     enable_code_agents: bool = False
     allow_tool_codegen: bool = False
@@ -111,10 +121,12 @@ class LLMConfig(BaseModel):
     planner_model: str = ""
     responder_model: str = ""
     code_model: str = ""
+    router_model: str = ""
     temperature: float = 0.1
     max_tokens: int = 800
     code_max_tokens: int = 4000
     code_temperature: float = 0.2
+    router_max_tokens: int = 300
     timeout_seconds: float = 60.0
     keep_alive: str = "5m"
 
@@ -129,6 +141,10 @@ class LLMConfig(BaseModel):
     @property
     def resolved_code_model(self) -> str:
         return self.code_model or self.model
+
+    @property
+    def resolved_router_model(self) -> str:
+        return self.router_model or self.model
 
     @property
     def planner_enabled(self) -> bool:
@@ -158,6 +174,7 @@ class RuntimeConfig(BaseModel):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     response: ResponseConfig = Field(default_factory=ResponseConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
     llm: LLMConfig | None = None
     embeddings: EmbeddingConfig | None = None
     scripts_dir: str = ""

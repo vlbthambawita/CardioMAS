@@ -6,10 +6,12 @@ from typing import Any
 from cardiomas.agentic.aggregator import aggregate_results
 from cardiomas.agentic.executor import execute_plan_events
 from cardiomas.agentic.planner import plan_query_events
+from cardiomas.agentic.react_agent import make_react_decision, run_react_events
 from cardiomas.agentic.responder import compose_answer_events
 from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.ollama import build_chat_client, build_embedding_client
 from cardiomas.knowledge.corpus import build_corpus, load_corpus
+from cardiomas.memory.persistent import PersistentMemory, build_persistent_memory
 from cardiomas.memory.session import SessionStore
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.runtime import AgentEvent, CorpusManifest, QueryResult
@@ -23,6 +25,12 @@ class AgenticRuntime:
         self._chat_client = build_chat_client(config.llm)
         self._embedding_client = build_embedding_client(config.embeddings)
         self._autonomy_manager = AutonomousToolManager(config, chat_client=self._chat_client)
+        self._persistent_memory: PersistentMemory | None = None
+        if config.agent.memory_mode == "persistent":
+            self._persistent_memory = build_persistent_memory(
+                config.output_dir,
+                max_entries=config.agent.persistent_memory_max,
+            )
 
     def build_corpus(self, force_rebuild: bool = False) -> CorpusManifest:
         if force_rebuild or not self.config.corpus_path.exists():
@@ -78,6 +86,45 @@ class AgenticRuntime:
             autonomy_manager=self._autonomy_manager,
         )
 
+        # ── ReAct mode ────────────────────────────────────────────────────
+        if self.config.agent.mode == "react" and self._chat_client is not None:
+            (
+                answer, citations, evidence, aggregate,
+                tool_calls, llm_traces, warnings, react_steps,
+            ) = yield from run_react_events(
+                query=query,
+                config=self.config,
+                registry=registry,
+                chat_client=self._chat_client,
+                session_store=self.sessions,
+                session_id=session.session_id,
+                autonomy_manager=self._autonomy_manager,
+                persistent_memory=self._persistent_memory,
+            )
+            decision = make_react_decision(react_steps)
+            all_warnings = warnings + manifest.warnings
+            result = QueryResult(
+                session_id=session.session_id,
+                query=query,
+                answer=answer,
+                decision=decision,
+                citations=citations,
+                evidence=evidence,
+                tool_calls=tool_calls,
+                warnings=all_warnings,
+                llm_traces=llm_traces,
+                repair_traces=self._autonomy_manager.consume_traces(),
+                standalone_scripts=aggregate.get("standalone_scripts", []),
+                react_steps=react_steps,
+            )
+            yield AgentEvent(
+                type="final_result", stage="runtime",
+                message="Query finished (react).",
+                data={"result": result.model_dump(mode="json")},
+            )
+            return result
+
+        # ── Linear mode (legacy, default) ─────────────────────────────────
         decision, planner_traces, planner_warnings = yield from plan_query_events(
             query,
             self.config,
@@ -116,5 +163,9 @@ class AgenticRuntime:
             repair_traces=self._autonomy_manager.consume_traces(),
             standalone_scripts=aggregate.get("standalone_scripts", []),
         )
-        yield AgentEvent(type="final_result", stage="runtime", message="Query finished.", data={"result": result.model_dump(mode="json")})
+        yield AgentEvent(
+            type="final_result", stage="runtime",
+            message="Query finished.",
+            data={"result": result.model_dump(mode="json")},
+        )
         return result

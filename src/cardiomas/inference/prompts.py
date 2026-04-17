@@ -109,6 +109,140 @@ def responder_messages(
     ]
 
 
+def orchestrator_messages(
+    query: str,
+    tools: list[ToolSpec],
+    observations: list[dict],
+) -> list[ChatMessage]:
+    tool_lines = "\n".join(
+        f"- {t.name}: {t.description}" for t in tools
+    ) or "- none"
+    obs_text = ""
+    if observations:
+        parts = []
+        for i, obs in enumerate(observations, 1):
+            tool = obs.get("tool", "?")
+            observation = obs.get("observation", obs.get("error", ""))
+            parts.append(f"  Step {i}: called {tool!r} → {_trim(observation, 200)}")
+        obs_text = "\nPrevious steps:\n" + "\n".join(parts) + "\n"
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You are CardioMAS, a medical dataset analysis agent. "
+                "Decide the next action to take given the query and what you have observed so far. "
+                "Return strict JSON with keys: thought, action, args. "
+                "'thought' is your reasoning. 'action' is the tool name or 'answer' when done. "
+                "'args' is a dict of arguments for the tool (empty dict when action is 'answer'). "
+                "Do not repeat the same tool call with identical args. "
+                "Say action='answer' when you have enough information."
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"Query: {query}\n"
+                f"{obs_text}\n"
+                "Available tools:\n"
+                f"{tool_lines}\n\n"
+                "What is your next action? Return JSON only."
+            ),
+        ),
+    ]
+
+
+def router_messages(query: str, tools: list[ToolSpec]) -> list[ChatMessage]:
+    tool_names = ", ".join(t.name for t in tools)
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You are a query router for a medical dataset analysis system. "
+                "Classify the user query into one of these routes: "
+                "'code' (needs computation or data analysis), "
+                "'retrieval' (needs document lookup), "
+                "'web' (needs a live URL fetch), "
+                "'orchestrate' (complex, needs multiple steps). "
+                "Return strict JSON with keys: route, reason."
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"Query: {query}\n"
+                f"Available tools: {tool_names}\n\n"
+                "Classify this query. Return JSON only."
+            ),
+        ),
+    ]
+
+
+def decomposer_messages(query: str) -> list[ChatMessage]:
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You decompose complex user queries into atomic sub-queries for a medical dataset analysis system. "
+                "Each sub-query has a type: 'factual' (needs document lookup), "
+                "'computational' (needs data analysis or code), or 'exploratory' (open-ended). "
+                "Return strict JSON with key 'sub_queries': a list of objects each with 'text' and 'query_type'. "
+                "If the query is already simple, return a single sub-query with the original text. "
+                "Cap at 4 sub-queries."
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=f"Query: {query}\n\nDecompose into atomic sub-queries. Return JSON only.",
+        ),
+    ]
+
+
+def retrieval_grader_messages(query: str, chunks_text: str) -> list[ChatMessage]:
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You grade the relevance of retrieved evidence for a user query. "
+                "Given the query and retrieved chunk summaries, decide if the evidence is: "
+                "'sufficient' (clearly answers the query), "
+                "'partial' (partially relevant, proceed but note gaps), "
+                "or 'insufficient' (irrelevant, need different retrieval). "
+                "Return strict JSON with keys: verdict, relevant_count (int), reason."
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"Query: {query}\n\n"
+                f"Retrieved chunks:\n{chunks_text}\n\n"
+                "Grade relevance. Return JSON only."
+            ),
+        ),
+    ]
+
+
+def answer_grader_messages(query: str, answer: str, evidence_text: str) -> list[ChatMessage]:
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "You assess the quality of an AI-generated answer to a medical dataset query. "
+                "Check whether the answer is grounded in the provided evidence. "
+                "Return strict JSON with keys: verdict ('grounded', 'hallucinated', or 'incomplete'), reason."
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"Query: {query}\n\n"
+                f"Answer: {answer}\n\n"
+                f"Evidence:\n{_trim(evidence_text, 800)}\n\n"
+                "Is the answer grounded? Return JSON only."
+            ),
+        ),
+    ]
+
+
 def prompt_preview(messages: list[ChatMessage], limit: int = 400) -> str:
     text = "\n".join(f"{message.role.upper()}: {message.content}" for message in messages)
     return _trim(text, limit)

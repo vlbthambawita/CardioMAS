@@ -9,7 +9,7 @@ llm:
   provider: ollama
   base_url: http://localhost:11434
   planner_mode: heuristic          # planner stays heuristic; only code synthesis uses LLM
-  model: gemma3:4b
+  model: gemma4:latest
   code_max_tokens: 4000            # scripts need more tokens than JSON planner responses
   code_temperature: 0.2
 autonomy:

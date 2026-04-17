@@ -35,6 +35,13 @@ class ToolRegistry:
     def has(self, name: str) -> bool:
         return name in self._handlers
 
+    def agent_tool_list(self) -> str:
+        """Human-readable tool list for LLM prompts."""
+        lines = []
+        for spec in self.specs():
+            lines.append(f"- {spec.name}: {spec.description}")
+        return "\n".join(lines) or "(no tools available)"
+
 
 def build_registry(
     config: RuntimeConfig,

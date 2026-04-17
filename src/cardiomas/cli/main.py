@@ -201,6 +201,24 @@ def _render_query_result(result: dict, answer_already_streamed: bool = False) ->
             )
         console.print(table)
 
+    react_steps = result.get("react_steps", [])
+    if react_steps:
+        table = Table(title="ReAct Steps")
+        table.add_column("Iter", style="cyan")
+        table.add_column("Action")
+        table.add_column("OK")
+        table.add_column("Observation")
+        for step in react_steps:
+            obs = step.get("observation", "")
+            obs_short = obs[:80] + "..." if len(obs) > 80 else obs
+            table.add_row(
+                str(step.get("iteration", "")),
+                step.get("action", ""),
+                str(step.get("ok", True)),
+                obs_short,
+            )
+        console.print(table)
+
     if result["warnings"]:
         console.print("[yellow]Warnings[/yellow]")
         for warning in result["warnings"]:
@@ -237,6 +255,8 @@ def _render_live_events(events) -> None:
         elif event_type == "final_result":
             result = event.get("data", {}).get("result", {})
             _render_query_result(result, answer_already_streamed=False)
+        elif event_type == "status" and event.get("stage") == "react":
+            console.print(f"[dim cyan]react[/dim cyan] {event.get('message', '')}")
 
 
 if __name__ == "__main__":

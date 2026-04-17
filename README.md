@@ -1,6 +1,6 @@
 # CardioMAS
 
-CardioMAS is a local-first Agentic RAG runtime for dataset understanding and grounded question answering. The current runtime supports deterministic execution, Ollama-backed planning and response generation, and a guarded autonomy layer that generates query-specific Python and shell artifacts on demand.
+CardioMAS is a local-first Agentic RAG runtime for dataset understanding and grounded question answering. It supports two agent modes: a linear planner→executor pipeline (default) and a **ReAct loop** (Reason + Act) that iteratively selects tools based on accumulated observations, grades retrieved evidence for relevance, optionally self-reflects on the final answer, and stores grounded answers in persistent cross-session memory.
 
 ## Architecture
 
@@ -9,9 +9,10 @@ The active runtime is organized around:
 - `knowledge/` for source loading, chunking, and corpus build
 - `retrieval/` for BM25, dense, and hybrid search
 - `tools/` for retrieval, dataset inspection, research, and utility tools
-- `agentic/` for planning, execution, aggregation, and answering
+- `agentic/` for planning, execution, aggregation, answering, routing, decomposition, and grading
 - `inference/` for Ollama chat and embedding clients
 - `autonomy/` and `coding/` for generated artifact workspaces, verification, and bounded repair loops
+- `memory/` for session state and persistent cross-session answer memory
 
 ## Install
 
@@ -133,6 +134,8 @@ Ready-to-run examples:
 - `examples/agentic_rag_demo/runtime.yaml`
 - `examples/ollama/runtime_local.yaml`
 - `examples/ollama/runtime_ptbxl.yaml`
+- `examples/ollama/ptbxl_code_only.yaml` — script-first with LLM code synthesis (linear mode)
+- `examples/ollama/ptbxl_react.yaml` — full ReAct agent with script execution and persistent memory
 
 ## Commands
 
@@ -181,6 +184,57 @@ Inspect enabled tools:
 
 ```bash
 cardiomas inspect-tools --config examples/ollama/runtime_local.yaml
+```
+
+## ReAct Agent Mode
+
+Setting `agent.mode: react` replaces the linear planner→executor chain with an iterative think-act-observe loop backed by the LLM. The agent reasons about which tool to call next based on all previous observations, and stops when it decides it has enough information to answer.
+
+```yaml
+agent:
+  mode: react                  # "linear" (default) or "react"
+  max_iterations: 6            # max think-act-observe cycles per sub-query
+  query_decomposition: false   # split complex multi-part queries into sub-queries
+  self_reflection: true        # grade the final answer for hallucination/completeness
+  retrieval_grading: true      # grade retrieved chunks; loop back if insufficient (CRAG)
+  memory_mode: persistent      # "session" | "persistent" | "none"
+  persistent_memory_max: 200
+```
+
+### Query routing
+
+Before the ReAct loop, the query is classified into one of four routes:
+
+| Route | Triggers | First tool hint |
+|---|---|---|
+| `code` | compute keywords (count, distribution, statistics, …) + dataset present | `generate_python_artifact` |
+| `retrieval` | default | `retrieve_corpus` |
+| `web` | URL in query | `fetch_webpage` |
+| `orchestrate` | "compare", "versus", multiple "?" | multi-step plan |
+
+### Retrieval grading (CRAG)
+
+When `retrieval_grading: true`, retrieved chunks are graded as `sufficient`, `partial`, or `insufficient`. If insufficient, the agent loops back for another retrieval attempt before synthesizing an answer.
+
+### Self-reflection (Self-RAG)
+
+When `self_reflection: true`, after the answer is synthesized the LLM grades it as `grounded`, `hallucinated`, or `incomplete` and appends a warning to the result if quality is low.
+
+### Persistent memory
+
+When `memory_mode: persistent`, grounded answers are stored in `{output_dir}/agent_memory.json`. Future similar queries reuse the cached answer as a starting candidate (bag-of-words cosine similarity, threshold 0.70). Ungrounded answers (flagged as hallucinated) are never cached.
+
+### PTB-XL ReAct example
+
+`examples/ollama/ptbxl_react.yaml` combines all ReAct features with LLM-driven script generation and auto-execution:
+
+```bash
+cardiomas check-ollama --config examples/ollama/ptbxl_react.yaml
+cardiomas build-corpus --config examples/ollama/ptbxl_react.yaml
+cardiomas query "How many unique patients are in this dataset?" \
+  --config examples/ollama/ptbxl_react.yaml --live
+cardiomas query "What is the class distribution of diagnostic labels?" \
+  --config examples/ollama/ptbxl_react.yaml
 ```
 
 ## dataset_mode: script_only
@@ -243,27 +297,32 @@ Generated scripts:
 
 ## PTB-XL Example
 
-The repo includes an Ollama-ready PTB-XL config at `examples/ollama/runtime_ptbxl.yaml`.
+The repo includes Ollama-ready PTB-XL configs:
+
+| Config | Mode | Use when |
+|---|---|---|
+| `examples/ollama/runtime_ptbxl.yaml` | linear + hybrid retrieval | general Q&A |
+| `examples/ollama/ptbxl_code_only.yaml` | linear + LLM script generation | dataset stats, write script then run manually |
+| `examples/ollama/ptbxl_react.yaml` | ReAct + LLM script generation + auto-execution | full agentic reasoning, scripts run automatically |
 
 ```bash
+# General Q&A (linear mode)
 cardiomas check-ollama --config examples/ollama/runtime_ptbxl.yaml
 cardiomas build-corpus --force --config examples/ollama/runtime_ptbxl.yaml
 cardiomas query "Summarize the PTB-XL dataset structure and metadata columns." \
   --config examples/ollama/runtime_ptbxl.yaml
-cardiomas query "Give me summary statistics for this dataset." \
-  --config examples/ollama/runtime_ptbxl.yaml
-```
 
-With `dataset_mode: script_only` the agent generates a ready-to-run script instead of guessing the answer:
-
-```bash
+# Script generation — writes script, user runs it (linear mode)
 cardiomas query "How many unique patients are in this dataset?" \
-  --config examples/ollama/runtime_ptbxl.yaml
+  --config examples/ollama/ptbxl_code_only.yaml
 # → Scripts Generated
 # →   count-unique-patients_82c4092a.py
-# →   Path: runtime_output/scripts/count-unique-patients_82c4092a.py
-# →   Run:  python runtime_output/scripts/count-unique-patients_82c4092a.py
-python runtime_output/scripts/count-unique-patients_82c4092a.py
+# →   Path: runtime_output/scripts/ptbxl/count-unique-patients_82c4092a.py
+python runtime_output/scripts/ptbxl/count-unique-patients_82c4092a.py
+
+# Full ReAct mode — reasons, generates script, runs it, synthesizes answer
+cardiomas query "What is the class distribution of diagnostic labels?" \
+  --config examples/ollama/ptbxl_react.yaml --live
 ```
 
 ## Python API

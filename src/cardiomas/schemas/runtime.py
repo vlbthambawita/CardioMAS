@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from cardiomas.schemas.evidence import Citation, EvidenceChunk
 from cardiomas.schemas.tools import ToolCallRecord
+
+
+class ReActStep(BaseModel):
+    iteration: int
+    thought: str = ""
+    action: str = ""
+    action_args: dict = Field(default_factory=dict)
+    observation: str = ""
+    ok: bool = True
+    error: str = ""
+
+
+class GradedEvidence(BaseModel):
+    verdict: Literal["sufficient", "insufficient", "partial"] = "partial"
+    relevant_count: int = 0
+    reason: str = ""
 
 
 class PlanStep(BaseModel):
@@ -74,3 +91,4 @@ class QueryResult(BaseModel):
     llm_traces: list[LLMTrace] = Field(default_factory=list)
     repair_traces: list[RepairTrace] = Field(default_factory=list)
     standalone_scripts: list[dict] = Field(default_factory=list)
+    react_steps: list[ReActStep] = Field(default_factory=list)
