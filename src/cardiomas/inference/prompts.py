@@ -62,50 +62,79 @@ def responder_messages(
     aggregate: dict,
     warnings: list[str],
 ) -> list[ChatMessage]:
+    # Separate script-output chunks (highest priority) from corpus/tool chunks.
+    script_chunks = [c for c in evidence if c.source_type == "script_output"]
+    other_chunks = [c for c in evidence if c.source_type != "script_output"]
+
+    # Build numbered evidence list for citation purposes (non-script first, then script).
+    ordered = other_chunks[:5] + script_chunks[:2]
     evidence_lines = []
-    for index, chunk in enumerate(evidence, start=1):
+    for index, chunk in enumerate(ordered, start=1):
         evidence_lines.append(
             json.dumps(
                 {
                     "id": index,
-                    "chunk_id": chunk.chunk_id,
-                    "source_label": chunk.source_label,
-                    "locator": chunk.metadata.get("chunk_label") or chunk.title or chunk.uri,
-                    "content": _trim(chunk.content, 500),
+                    "source": chunk.source_label,
+                    "content": _trim(chunk.content, 400),
                 },
                 ensure_ascii=True,
             )
         )
 
-    tool_context = {
-        "dataset_inspection": aggregate.get("dataset_inspection"),
-        "calculations": aggregate.get("calculations", []),
-        "generated_python_artifacts": aggregate.get("generated_python_artifacts", []),
-        "generated_shell_artifacts": aggregate.get("generated_shell_artifacts", []),
-        "web_pages": aggregate.get("web_pages", []),
-        "warnings": warnings,
-    }
+    # Script execution output — show separately so the LLM knows what to interpret.
+    script_section = ""
+    if script_chunks:
+        script_section = (
+            "\nScript execution output (interpret this to answer the question):\n"
+            + "\n---\n".join(_trim(c.content, 1500) for c in script_chunks[:2])
+            + "\n"
+        )
+
+    # Compact tool context — only include fields that add value; trim large blobs.
+    tool_context: dict = {}
+    if aggregate.get("calculations"):
+        tool_context["calculations"] = aggregate["calculations"]
+    if aggregate.get("dataset_inspection"):
+        di = aggregate["dataset_inspection"]
+        tool_context["dataset_inspection"] = {
+            "total_files": di.get("total_files"),
+            "extension_counts": di.get("extension_counts"),
+            "csv_headers": di.get("csv_headers"),
+        }
+    if aggregate.get("web_pages"):
+        tool_context["web_pages"] = [
+            {"title": p.get("title", ""), "key_facts": p.get("key_facts", {}),
+             "summary": _trim(p.get("summary", ""), 300)}
+            for p in aggregate["web_pages"][:2]
+        ]
+    if aggregate.get("generated_python_artifacts"):
+        tool_context["generated_python_artifacts"] = aggregate["generated_python_artifacts"][:1]
+
+    has_script_output = bool(script_chunks)
+    system_instruction = (
+        "You are the grounded CardioMAS responder. "
+        + (
+            "A Python script was executed and its output is provided below. "
+            "Interpret the output to directly answer the user's question in plain language. "
+            if has_script_output else
+            "Answer only with support from the provided evidence and tool outputs. "
+            "If the evidence is insufficient, say so plainly. "
+        )
+        + "Return strict JSON with exactly these keys: answer (string), citations (list of int evidence ids), "
+        "warnings (list of strings). No markdown, no extra keys."
+    )
+
+    user_content = f"Question: {query}\n"
+    if evidence_lines:
+        user_content += "\nEvidence:\n" + "\n".join(evidence_lines)
+    user_content += script_section
+    if tool_context:
+        user_content += "\nTool context:\n" + json.dumps(tool_context, indent=2, default=str)
+    user_content += "\n\nReturn JSON only."
+
     return [
-        ChatMessage(
-            role="system",
-            content=(
-                "You are the grounded CardioMAS responder. Answer only with support from the provided evidence "
-                "and tool outputs. If the evidence is insufficient, say so plainly. "
-                "Return strict JSON with keys: answer, citations, warnings. "
-                "Citations must be a list of integer evidence ids."
-            ),
-        ),
-        ChatMessage(
-            role="user",
-            content=(
-                f"Question:\n{query}\n\n"
-                "Evidence items:\n"
-                f"{chr(10).join(evidence_lines) if evidence_lines else '(none)'}\n\n"
-                "Tool context:\n"
-                f"{json.dumps(tool_context, indent=2, default=str)}\n\n"
-                "Write a concise grounded answer. Return JSON only."
-            ),
-        ),
+        ChatMessage(role="system", content=system_instruction),
+        ChatMessage(role="user", content=user_content),
     ]
 
 

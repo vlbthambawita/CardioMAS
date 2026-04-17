@@ -120,6 +120,12 @@ def _compose_with_ollama_events(
             message="Responder LLM stream ended.",
             data={"model": config.llm.resolved_responder_model},
         )
+
+        # If streaming returned nothing, retry with a single non-streaming call.
+        if not streamed_content.strip():
+            fallback_resp = chat_client.chat(request)
+            streamed_content = fallback_resp.content
+
         trace.response_preview = _trim(streamed_content)
         payload = _ResponderPayload.model_validate(json.loads(streamed_content))
         answer = payload.answer.strip()
@@ -180,17 +186,21 @@ def _compose_deterministic(
     lines: list[str] = []
     citations: list[Citation] = []
 
-    # Phase 2: script output evidence takes priority
+    # Phase 2: script ran — synthesize a readable answer from the output.
     script_output_chunks = [c for c in evidence if c.source_type == "script_output"]
     if script_output_chunks:
         chunk = script_output_chunks[0]
-        lines.append("Script execution output:")
-        lines.append(chunk.content)
+        raw = chunk.content.strip()
+        # Wrap the raw output with context so the user understands what they're seeing.
+        lines.append(f"The following result was computed by a generated analysis script for the query: \"{query}\"\n")
+        lines.append(raw[:3000])
+        if len(raw) > 3000:
+            lines.append("\n... (output truncated)")
         citations.append(chunk.citation())
         if warnings:
             lines.append("\nWarnings:")
-            for warning in warnings:
-                lines.append(f"- {warning}")
+            for w in warnings:
+                lines.append(f"- {w}")
         return "\n".join(lines), citations
 
     calculations = aggregate.get("calculations", [])

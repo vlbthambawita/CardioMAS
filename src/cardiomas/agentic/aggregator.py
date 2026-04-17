@@ -56,7 +56,14 @@ def aggregate_results(results: list[ToolResult]) -> tuple[list[EvidenceChunk], d
         elif result.tool_name == "inspect_dataset" and result.ok:
             aggregate["dataset_inspection"] = result.data
         elif result.tool_name in {"fetch_webpage", "read_dataset_website"} and result.ok:
-            aggregate["web_pages"].append(result.data)
+            # Store a compact summary instead of the full data dict — the raw data
+            # (sections, tables, links) can exceed 10 k chars and overloads the responder prompt.
+            aggregate["web_pages"].append({
+                "url": result.data.get("url", ""),
+                "title": result.data.get("title", ""),
+                "key_facts": result.data.get("key_facts", {}),
+                "summary": result.summary[:1200],
+            })
         elif result.tool_name == "generate_python_artifact" and result.ok:
             if result.data.get("is_standalone"):
                 aggregate["standalone_scripts"].append(result.data)
