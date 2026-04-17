@@ -30,6 +30,18 @@ class LLMTrace(BaseModel):
     error: str = ""
 
 
+class RepairTrace(BaseModel):
+    tool_name: str
+    action: str
+    attempt: int = 0
+    ok: bool = True
+    workspace_path: str = ""
+    files_written: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
+    retry_succeeded: bool = False
+    error: str = ""
+
+
 class CorpusManifest(BaseModel):
     built_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     document_count: int = 0
@@ -52,3 +64,4 @@ class QueryResult(BaseModel):
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     llm_traces: list[LLMTrace] = Field(default_factory=list)
+    repair_traces: list[RepairTrace] = Field(default_factory=list)

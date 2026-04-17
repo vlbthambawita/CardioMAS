@@ -86,8 +86,38 @@ def _heuristic_plan(query: str, config: RuntimeConfig, registry: ToolRegistry) -
             steps.append(PlanStep(tool_name="calculate", reason="Query contains an arithmetic expression.", args={"expression": expression}))
 
     dataset_path = _first_dataset_path(config)
+    target_path = _extract_local_path(query)
+    if "read_dataset_file" in available and (
+        target_path or _needs_file_read(lower)
+    ):
+        steps.append(
+            PlanStep(
+                tool_name="read_dataset_file",
+                reason="Query asks to read or inspect a specific local dataset file.",
+                args={"target_path": target_path, "dataset_path": dataset_path},
+            )
+        )
+
+    if dataset_path and "dataset_statistics" in available and _needs_dataset_statistics(lower):
+        steps.append(
+            PlanStep(
+                tool_name="dataset_statistics",
+                reason="Query asks for dataset statistics or summary analysis.",
+                args={"dataset_path": dataset_path},
+            )
+        )
+
     if dataset_path and "inspect_dataset" in available and _needs_dataset_inspection(lower):
         steps.append(PlanStep(tool_name="inspect_dataset", reason="Query asks about local dataset structure or metadata.", args={"dataset_path": dataset_path}))
+
+    if dataset_path and "generate_shell_script" in available and _needs_shell_script(lower):
+        steps.append(
+            PlanStep(
+                tool_name="generate_shell_script",
+                reason="Query asks for a shell script or batch command.",
+                args={"task": query, "dataset_path": dataset_path},
+            )
+        )
 
     if "retrieve_corpus" in available:
         steps.append(PlanStep(tool_name="retrieve_corpus", reason="Ground the answer with corpus retrieval.", args={"query": query, "top_k": config.retrieval.top_k}))
@@ -132,6 +162,20 @@ def _sanitize_decision(
             if not url:
                 continue
             args["url"] = url
+        elif step.tool_name == "read_dataset_file":
+            args["dataset_path"] = dataset_path
+            args["target_path"] = str(args.get("target_path") or _extract_local_path(query))
+            args["max_preview_lines"] = _safe_top_k(args.get("max_preview_lines"), 40)
+        elif step.tool_name == "dataset_statistics":
+            if not dataset_path:
+                continue
+            args["dataset_path"] = dataset_path
+            args["target_file"] = str(args.get("target_file") or "")
+        elif step.tool_name == "generate_shell_script":
+            if not dataset_path:
+                continue
+            args["dataset_path"] = dataset_path
+            args["task"] = query
         steps.append(
             PlanStep(
                 tool_name=step.tool_name,
@@ -158,6 +202,21 @@ def _extract_expression(query: str) -> str:
 
 def _needs_dataset_inspection(lower: str) -> bool:
     hints = ["dataset", "file", "files", "column", "columns", "metadata", "csv", "folder", "directory"]
+    return any(hint in lower for hint in hints)
+
+
+def _needs_dataset_statistics(lower: str) -> bool:
+    hints = ["statistics", "statistical", "distribution", "missing", "mean", "median", "summary stats", "class count", "counts"]
+    return any(hint in lower for hint in hints)
+
+
+def _needs_shell_script(lower: str) -> bool:
+    hints = ["shell script", "bash script", "script", "command script"]
+    return any(hint in lower for hint in hints)
+
+
+def _needs_file_read(lower: str) -> bool:
+    hints = ["read file", "inspect file", "open file", "show file", "read dataset file"]
     return any(hint in lower for hint in hints)
 
 
@@ -204,3 +263,11 @@ def _trim(text: str, limit: int = 240) -> str:
         return compact
     trimmed = compact[:limit].rsplit(" ", 1)[0]
     return f"{trimmed}..."
+
+
+def _extract_local_path(query: str) -> str:
+    matches = re.findall(r"(/[^\s\"']+)", query)
+    for match in matches:
+        if Path(match).exists():
+            return match
+    return ""

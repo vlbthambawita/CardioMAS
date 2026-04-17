@@ -22,6 +22,11 @@ embeddings:
   base_url: http://localhost:11434
   model: embeddinggemma
   batch_size: 16
+autonomy:
+  enable_code_agents: true
+  allow_tool_codegen: true
+  allow_script_codegen: true
+  max_repair_attempts: 2
 tools:
   enabled:
     - retrieve_corpus

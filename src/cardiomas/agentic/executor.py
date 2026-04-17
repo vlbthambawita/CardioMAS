@@ -47,8 +47,11 @@ def execute_plan(
             ok=result.ok,
             summary=result.summary,
             error=result.error,
+            repaired=spec.generated and result.ok,
         )
         session_store.append_tool_call(session_id, call)
+        if not result.ok and result.error:
+            warnings.append(f"{step.tool_name}: {result.error}")
         results.append(result)
         calls.append(call)
     return results, calls, warnings

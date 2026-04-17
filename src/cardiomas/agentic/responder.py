@@ -103,6 +103,36 @@ def _compose_deterministic(
             first_name, headers = next(iter(dataset_info["csv_headers"].items()))
             lines.append(f"Sample CSV schema from `{first_name}`: {', '.join(headers) if headers else '(empty)'}.")
 
+    stats_info = aggregate.get("dataset_statistics")
+    if stats_info:
+        lines.append(
+            "Dataset statistics: "
+            f"rows={stats_info.get('total_rows', 0)}, "
+            f"columns={len(stats_info.get('columns', []))}, "
+            f"missing_fraction={stats_info.get('missing_fraction', 0.0)}."
+        )
+        class_counts = stats_info.get("class_counts") or {}
+        if isinstance(class_counts, dict) and class_counts.get("counts"):
+            lines.append(f"Detected class counts from `{class_counts.get('column', 'label')}`: {class_counts['counts']}.")
+        numeric_summary = stats_info.get("numeric_summary") or {}
+        if numeric_summary:
+            first_name, values = next(iter(numeric_summary.items()))
+            lines.append(f"Sample numeric summary for `{first_name}`: {values}.")
+
+    file_reads = aggregate.get("file_reads", [])
+    if file_reads:
+        latest_file = file_reads[-1]
+        lines.append(
+            "Generated file reader: "
+            f"reader={latest_file.get('reader', 'unknown')}, "
+            f"path={latest_file.get('selected_path', '')}."
+        )
+
+    generated_scripts = aggregate.get("generated_scripts", [])
+    if generated_scripts:
+        latest_script = generated_scripts[-1]
+        lines.append(f"Generated shell script: `{latest_script.get('script_path', '')}`.")
+
     if evidence:
         lines.append("Retrieved evidence:")
         for chunk in evidence[: config.response.max_citations]:

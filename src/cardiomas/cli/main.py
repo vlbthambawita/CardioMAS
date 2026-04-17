@@ -81,6 +81,23 @@ def query(
             table.add_row(trace["stage"], trace["model"], str(trace["ok"]), trace["error"])
         console.print(table)
 
+    if result["repair_traces"]:
+        table = Table(title="Repair Traces")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Action")
+        table.add_column("Attempt")
+        table.add_column("OK")
+        table.add_column("Error")
+        for trace in result["repair_traces"]:
+            table.add_row(
+                trace["tool_name"],
+                trace["action"],
+                str(trace["attempt"]),
+                str(trace["ok"]),
+                trace["error"],
+            )
+        console.print(table)
+
     if result["warnings"]:
         console.print("[yellow]Warnings[/yellow]")
         for warning in result["warnings"]:

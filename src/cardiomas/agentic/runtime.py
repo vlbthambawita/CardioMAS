@@ -6,6 +6,7 @@ from cardiomas.agentic.aggregator import aggregate_results
 from cardiomas.agentic.executor import execute_plan
 from cardiomas.agentic.planner import plan_query
 from cardiomas.agentic.responder import compose_answer
+from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.ollama import build_chat_client, build_embedding_client
 from cardiomas.knowledge.corpus import build_corpus, load_corpus
 from cardiomas.memory.session import SessionStore
@@ -20,6 +21,7 @@ class AgenticRuntime:
         self.sessions = SessionStore()
         self._chat_client = build_chat_client(config.llm)
         self._embedding_client = build_embedding_client(config.embeddings)
+        self._autonomy_manager = AutonomousToolManager(config)
 
     def build_corpus(self, force_rebuild: bool = False) -> CorpusManifest:
         if force_rebuild or not self.config.corpus_path.exists():
@@ -30,7 +32,12 @@ class AgenticRuntime:
 
     def inspect_tools(self):
         chunks = load_corpus(self.config)
-        registry = build_registry(self.config, chunks, embedding_client=self._embedding_client)
+        registry = build_registry(
+            self.config,
+            chunks,
+            embedding_client=self._embedding_client,
+            autonomy_manager=self._autonomy_manager,
+        )
         return registry.specs()
 
     def check_ollama(self) -> dict[str, Any]:
@@ -48,7 +55,13 @@ class AgenticRuntime:
     def query(self, query: str, force_rebuild: bool = False) -> QueryResult:
         manifest = self.build_corpus(force_rebuild=force_rebuild)
         chunks = load_corpus(self.config)
-        registry = build_registry(self.config, chunks, embedding_client=self._embedding_client)
+        self._autonomy_manager.reset_traces()
+        registry = build_registry(
+            self.config,
+            chunks,
+            embedding_client=self._embedding_client,
+            autonomy_manager=self._autonomy_manager,
+        )
         session = self.sessions.start()
         self.sessions.append_query(session.session_id, query)
 
@@ -75,4 +88,5 @@ class AgenticRuntime:
             tool_calls=calls,
             warnings=warnings,
             llm_traces=planner_traces + responder_traces,
+            repair_traces=self._autonomy_manager.consume_traces(),
         )

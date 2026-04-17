@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.base import EmbeddingClient
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.tools import ToolResult, ToolSpec
@@ -31,11 +32,15 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return self._handlers[name](**kwargs)
 
+    def has(self, name: str) -> bool:
+        return name in self._handlers
+
 
 def build_registry(
     config: RuntimeConfig,
     chunks,
     embedding_client: EmbeddingClient | None = None,
+    autonomy_manager: AutonomousToolManager | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 
@@ -84,5 +89,16 @@ def build_registry(
             ),
             fetch_webpage,
         )
+
+    if autonomy_manager is not None and autonomy_manager.enabled:
+        for spec in autonomy_manager.tool_specs():
+            if registry.has(spec.name):
+                continue
+            if spec.name == "read_dataset_file":
+                registry.register(spec, autonomy_manager.read_dataset_file)
+            elif spec.name == "dataset_statistics":
+                registry.register(spec, autonomy_manager.dataset_statistics)
+            elif spec.name == "generate_shell_script":
+                registry.register(spec, autonomy_manager.generate_shell_script)
 
     return registry

@@ -76,3 +76,25 @@ def test_runtime_config_parses_ollama_sections(tmp_path):
     assert config.llm.resolved_planner_model == "llama3.2"
     assert config.embeddings is not None
     assert config.embeddings.model == "embeddinggemma"
+
+
+def test_runtime_config_resolves_autonomy_workspace(tmp_path):
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "output_dir: output",
+                "autonomy:",
+                "  enable_code_agents: true",
+                "  allow_tool_codegen: true",
+                "  workspace_dir: generated_tools",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = RuntimeConfig.from_file(str(config_path))
+
+    assert config.autonomy.enabled is True
+    assert config.autonomy.allow_tool_codegen is True
+    assert config.autonomy.workspace_dir == str((tmp_path / "generated_tools").resolve())

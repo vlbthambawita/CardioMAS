@@ -1,4 +1,5 @@
 from cardiomas.schemas.config import (
+    AutonomyConfig,
     EmbeddingConfig,
     KnowledgeSource,
     LLMConfig,
@@ -10,11 +11,12 @@ from cardiomas.schemas.config import (
 )
 from cardiomas.schemas.evidence import Citation, EvidenceChunk, KnowledgeDocument
 from cardiomas.schemas.memory import MemoryPolicy, SessionMemory
-from cardiomas.schemas.runtime import AgentDecision, CorpusManifest, LLMTrace, PlanStep, QueryResult
+from cardiomas.schemas.runtime import AgentDecision, CorpusManifest, LLMTrace, PlanStep, QueryResult, RepairTrace
 from cardiomas.schemas.tools import ToolCallRecord, ToolResult, ToolSpec
 
 __all__ = [
     "AgentDecision",
+    "AutonomyConfig",
     "Citation",
     "CorpusManifest",
     "EmbeddingConfig",
@@ -26,6 +28,7 @@ __all__ = [
     "MemoryPolicy",
     "PlanStep",
     "QueryResult",
+    "RepairTrace",
     "ResponseConfig",
     "RetrievalConfig",
     "RuntimeConfig",

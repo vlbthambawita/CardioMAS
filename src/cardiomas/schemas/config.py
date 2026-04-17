@@ -70,6 +70,36 @@ class ResponseConfig(BaseModel):
     max_citations: int = 5
 
 
+class AutonomyConfig(BaseModel):
+    enable_code_agents: bool = False
+    allow_tool_codegen: bool = False
+    allow_script_codegen: bool = False
+    max_repair_attempts: int = 2
+    workspace_dir: str = ""
+    require_approval_for_repo_writes: bool = True
+    require_approval_for_shell_execution: bool = True
+    require_approval_for_installs: bool = True
+    allowed_shell_prefixes: list[str] = Field(default_factory=lambda: ["python", "bash", "sh", "cardiomas"])
+    allowed_python_modules: list[str] = Field(
+        default_factory=lambda: [
+            "csv",
+            "json",
+            "math",
+            "statistics",
+            "pathlib",
+            "collections",
+            "datetime",
+            "numpy",
+            "pandas",
+            "cardiomas",
+        ]
+    )
+
+    @property
+    def enabled(self) -> bool:
+        return self.enable_code_agents
+
+
 class LLMConfig(BaseModel):
     provider: Literal["ollama"] = "ollama"
     base_url: str = "http://localhost:11434"
@@ -117,6 +147,7 @@ class RuntimeConfig(BaseModel):
     memory: MemoryPolicy = Field(default_factory=MemoryPolicy)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     response: ResponseConfig = Field(default_factory=ResponseConfig)
+    autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     llm: LLMConfig | None = None
     embeddings: EmbeddingConfig | None = None
 
@@ -127,6 +158,12 @@ class RuntimeConfig(BaseModel):
     @property
     def manifest_path(self) -> Path:
         return Path(self.output_dir) / "corpus_manifest.json"
+
+    @property
+    def autonomy_workspace_path(self) -> Path:
+        if self.autonomy.workspace_dir:
+            return Path(self.autonomy.workspace_dir)
+        return Path(self.output_dir) / "autonomy_workspace"
 
     @property
     def planner_uses_ollama(self) -> bool:
@@ -190,6 +227,13 @@ def _resolve_relative_paths(data: dict, base_dir: Path) -> dict:
             source["path"] = str((base_dir / path_value).resolve())
         sources.append(source)
     resolved["sources"] = sources
+    autonomy = resolved.get("autonomy")
+    if isinstance(autonomy, dict):
+        autonomy_resolved = dict(autonomy)
+        workspace_dir = autonomy_resolved.get("workspace_dir")
+        if isinstance(workspace_dir, str) and workspace_dir and not Path(workspace_dir).is_absolute():
+            autonomy_resolved["workspace_dir"] = str((base_dir / workspace_dir).resolve())
+        resolved["autonomy"] = autonomy_resolved
     return resolved
 
 

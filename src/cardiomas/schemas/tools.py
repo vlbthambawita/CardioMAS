@@ -13,6 +13,7 @@ class ToolSpec(BaseModel):
     category: str
     read_only: bool = True
     requires_approval: bool = False
+    generated: bool = False
 
 
 class ToolResult(BaseModel):
@@ -30,3 +31,4 @@ class ToolCallRecord(BaseModel):
     ok: bool = True
     summary: str = ""
     error: str = ""
+    repaired: bool = False

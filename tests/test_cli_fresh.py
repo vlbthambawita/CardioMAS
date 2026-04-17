@@ -75,3 +75,33 @@ def test_check_ollama_cli(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert "llama3.2" in result.output
     assert "embeddinggemma" in result.output
+
+
+def test_inspect_tools_shows_autonomous_tools_when_enabled(tmp_path):
+    dataset_dir = tmp_path / "data"
+    dataset_dir.mkdir()
+    (dataset_dir / "metadata.csv").write_text("record_id,label\nrec_1,NORM\n", encoding="utf-8")
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "output_dir: output",
+                "sources:",
+                "  - kind: dataset_dir",
+                "    path: data",
+                "    label: demo-dataset",
+                "autonomy:",
+                "  enable_code_agents: true",
+                "  allow_tool_codegen: true",
+                "  allow_script_codegen: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["inspect-tools", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "dataset_statistics" in result.output
+    assert "read_dataset_file" in result.output
+    assert "generate_shell_script" in result.output
