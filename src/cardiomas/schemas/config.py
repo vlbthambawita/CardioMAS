@@ -81,6 +81,11 @@ class AgentConfig(BaseModel):
     retrieval_grading: bool = True
     memory_mode: Literal["session", "persistent", "none"] = "session"
     persistent_memory_max: int = 200
+    # ReAct++ extensions
+    upfront_planning: bool = False   # one LLM call before loop to produce ordered tool plan
+    step_reflection: bool = False    # agent reflects on progress after each observation
+    scratchpad: bool = True          # maintain distilled key-facts across iterations
+    tool_verification: bool = True   # validate tool args before execution
 
 
 class AutonomyConfig(BaseModel):

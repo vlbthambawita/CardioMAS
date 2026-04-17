@@ -35,6 +35,10 @@ agent:
   retrieval_grading: true       # grade retrieved chunks; loop back if insufficient
   memory_mode: persistent       # reuse answers across sessions (file-backed)
   persistent_memory_max: 200
+  upfront_planning: true        # ReAct++: one LLM call before loop to produce ordered tool plan
+  step_reflection: true         # ReAct++: agent reflects on progress after each observation
+  scratchpad: true              # ReAct++: maintain distilled key-facts across iterations
+  tool_verification: true       # ReAct++: validate tool args before execution
 
 autonomy:
   enable_code_agents: true

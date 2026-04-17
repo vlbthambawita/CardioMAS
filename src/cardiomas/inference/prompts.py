@@ -142,10 +142,13 @@ def orchestrator_messages(
     query: str,
     tools: list[ToolSpec],
     observations: list[dict],
+    scratchpad_text: str = "",
+    step_reflection: bool = False,
 ) -> list[ChatMessage]:
     tool_lines = "\n".join(
         f"- {t.name}: {t.description}" for t in tools
     ) or "- none"
+
     obs_text = ""
     if observations:
         parts = []
@@ -154,27 +157,63 @@ def orchestrator_messages(
             observation = obs.get("observation", obs.get("error", ""))
             parts.append(f"  Step {i}: called {tool!r} → {_trim(observation, 200)}")
         obs_text = "\nPrevious steps:\n" + "\n".join(parts) + "\n"
+
+    if step_reflection:
+        json_spec = (
+            "Return strict JSON with keys: thought, reflection, action, args. "
+            "'reflection' must be one of: 'making_progress', 'stuck', 'sufficient'. "
+            "Use 'stuck' if the last two steps gave no new information. "
+            "Use 'sufficient' when you have enough to answer (equivalent to action='answer')."
+        )
+    else:
+        json_spec = (
+            "Return strict JSON with keys: thought, action, args."
+        )
+
+    system_content = (
+        "You are CardioMAS, a medical dataset analysis agent. "
+        "Decide the next action to take given the query and what you have observed so far. "
+        + json_spec + " "
+        "'thought' is your reasoning. 'action' is the tool name or 'answer' when done. "
+        "'args' is a dict of arguments for the tool (empty dict when action is 'answer'). "
+        "Do not repeat the same tool call with identical args. "
+        "Say action='answer' when you have enough information."
+    )
+
+    user_parts = [f"Query: {query}"]
+    if scratchpad_text:
+        user_parts.append(scratchpad_text)
+    user_parts.append(obs_text)
+    user_parts.append(f"Available tools:\n{tool_lines}")
+    user_parts.append("What is your next action? Return JSON only.")
+
+    return [
+        ChatMessage(role="system", content=system_content),
+        ChatMessage(role="user", content="\n".join(user_parts)),
+    ]
+
+
+def react_planner_messages(query: str, tools: list[ToolSpec]) -> list[ChatMessage]:
+    tool_names = ", ".join(t.name for t in tools)
     return [
         ChatMessage(
             role="system",
             content=(
-                "You are CardioMAS, a medical dataset analysis agent. "
-                "Decide the next action to take given the query and what you have observed so far. "
-                "Return strict JSON with keys: thought, action, args. "
-                "'thought' is your reasoning. 'action' is the tool name or 'answer' when done. "
-                "'args' is a dict of arguments for the tool (empty dict when action is 'answer'). "
-                "Do not repeat the same tool call with identical args. "
-                "Say action='answer' when you have enough information."
+                "You are the CardioMAS pre-planner. Given a user query and available tools, "
+                "create a concise ordered plan (2-5 steps) of tool names to call to answer the query. "
+                "Put dataset exploration tools first (list_folder_structure, read_wfdb_dataset, read_dataset_website), "
+                "then analysis tools (inspect_dataset, retrieve_corpus), "
+                "then compute tools (generate_python_artifact) if calculation is needed. "
+                "Return strict JSON: {\"plan\": [\"tool1\", \"tool2\", ...], \"reasoning\": \"one sentence\"}. "
+                "Only use tool names from the provided list. No extra keys."
             ),
         ),
         ChatMessage(
             role="user",
             content=(
-                f"Query: {query}\n"
-                f"{obs_text}\n"
-                "Available tools:\n"
-                f"{tool_lines}\n\n"
-                "What is your next action? Return JSON only."
+                f"Query: {query}\n\n"
+                f"Available tools: {tool_names}\n\n"
+                "What is the best 2-5 step plan? Return JSON only."
             ),
         ),
     ]

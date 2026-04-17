@@ -8,6 +8,7 @@ from pathlib import Path
 from cardiomas.agentic.aggregator import aggregate_results
 from cardiomas.agentic.answer_grader import grade_answer
 from cardiomas.agentic.query_decomposer import SubQuery, decompose
+from cardiomas.agentic.react_planner import generate_plan
 from cardiomas.agentic.responder import compose_answer_events
 from cardiomas.agentic.retrieval_grader import grade_chunks
 from cardiomas.agentic.router import RouteDecision, route_query
@@ -15,6 +16,7 @@ from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.base import ChatClient, ChatRequest
 from cardiomas.inference.prompts import orchestrator_messages
 from cardiomas.memory.persistent import PersistentMemory
+from cardiomas.memory.scratchpad import Scratchpad
 from cardiomas.memory.session import SessionStore
 from cardiomas.safety.approvals import approval_required
 from cardiomas.safety.permissions import tool_allowed
@@ -22,6 +24,7 @@ from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.evidence import Citation, EvidenceChunk
 from cardiomas.schemas.runtime import AgentDecision, AgentEvent, LLMTrace, PlanStep, ReActStep, RepairTrace
 from cardiomas.schemas.tools import ToolCallRecord, ToolResult
+from cardiomas.tools.pre_exec_verifier import verify_tool_args
 from cardiomas.tools.registry import ToolRegistry
 
 
@@ -89,7 +92,12 @@ def run_react_events(
             data={"sub_queries": [sq.text for sq in sub_queries]},
         )
 
-    # ── 4. ReAct loop over sub-queries ──────────────────────────────────────
+    # ── 4. Upfront planning (ReAct++) ────────────────────────────────────────
+    react_plan: list[str] = []
+    if config.agent.upfront_planning and chat_client is not None:
+        react_plan = yield from generate_plan(query, config, registry, chat_client)
+
+    # ── 5. ReAct loop over sub-queries ──────────────────────────────────────
     for sq_index, sub_query in enumerate(sub_queries):
         sq_label = f"[{sq_index + 1}/{len(sub_queries)}] " if len(sub_queries) > 1 else ""
         yield AgentEvent(
@@ -107,6 +115,7 @@ def run_react_events(
             session_id=session_id,
             autonomy_manager=autonomy_manager,
             route_decision=route_decision,
+            initial_plan=react_plan,
         )
         all_tool_results.extend(tool_results)
         all_tool_calls.extend(tool_calls)
@@ -114,10 +123,10 @@ def run_react_events(
         all_warnings.extend(warnings)
         all_react_steps.extend(steps)
 
-    # ── 5. Aggregate evidence ────────────────────────────────────────────────
+    # ── 6. Aggregate evidence ────────────────────────────────────────────────
     evidence, aggregate = aggregate_results(all_tool_results)
 
-    # ── 6. Synthesize answer ─────────────────────────────────────────────────
+    # ── 7. Synthesize answer ─────────────────────────────────────────────────
     answer, citations, resp_traces, resp_warnings = yield from compose_answer_events(
         query=query,
         config=config,
@@ -129,7 +138,7 @@ def run_react_events(
     all_llm_traces.extend(resp_traces)
     all_warnings.extend(resp_warnings)
 
-    # ── 7. Optional self-reflection ──────────────────────────────────────────
+    # ── 8. Optional self-reflection ──────────────────────────────────────────
     if config.agent.self_reflection and chat_client is not None:
         verdict = grade_answer(query, answer, evidence, config, chat_client)
         yield AgentEvent(
@@ -142,7 +151,7 @@ def run_react_events(
         elif verdict == "incomplete":
             all_warnings.append("Answer grader flagged incomplete answer — more information may be needed.")
 
-    # ── 8. Store in persistent memory ───────────────────────────────────────
+    # ── 9. Store in persistent memory ───────────────────────────────────────
     if persistent_memory is not None and answer:
         grounded = not any("hallucination" in w.lower() for w in all_warnings)
         persistent_memory.store(
@@ -166,6 +175,7 @@ def _react_loop(
     session_id: str,
     autonomy_manager: AutonomousToolManager | None,
     route_decision: RouteDecision,
+    initial_plan: list[str] | None = None,
 ) -> Generator[AgentEvent, None, tuple[
     list[ToolResult], list[ToolCallRecord], list[LLMTrace], list[str], list[ReActStep],
 ]]:
@@ -176,15 +186,29 @@ def _react_loop(
     steps: list[ReActStep] = []
     observations: list[dict] = []
     called_tools: list[tuple[str, str]] = []  # (tool_name, args_key) for dedup
+    stuck_count: int = 0  # consecutive "stuck" reflections
+
+    # Short-term scratchpad (ReAct++)
+    scratchpad = Scratchpad() if config.agent.scratchpad else None
 
     specs = {spec.name: spec for spec in registry.specs()}
     query = sub_query.text
 
-    # Pre-select tools based on route for first iteration hint
+    # Inject router hint then upfront plan (plan overrides hint when present)
     _hint_first_tool(observations, route_decision, registry, config, query)
+    if initial_plan:
+        observations.append({
+            "tool": "_planner",
+            "observation": (
+                f"Upfront plan ({len(initial_plan)} steps): "
+                f"{' → '.join(initial_plan)}. "
+                "Follow this sequence but adapt if observations change."
+            ),
+        })
 
     assert config.llm is not None
     model = config.llm.resolved_responder_model or config.llm.model
+    step_reflection = config.agent.step_reflection
 
     for iteration in range(1, config.agent.max_iterations + 1):
         yield AgentEvent(
@@ -193,7 +217,12 @@ def _react_loop(
         )
 
         # ── Orchestrator LLM call ──────────────────────────────────────────
-        messages = orchestrator_messages(query, registry.specs(), observations)
+        scratchpad_text = scratchpad.to_string() if scratchpad and not scratchpad.is_empty() else ""
+        messages = orchestrator_messages(
+            query, registry.specs(), observations,
+            scratchpad_text=scratchpad_text,
+            step_reflection=step_reflection,
+        )
         trace = LLMTrace(
             stage=f"react-iter-{iteration}",
             provider=config.llm.provider,
@@ -222,6 +251,14 @@ def _react_loop(
         thought = thought_data.get("thought", "")
         action = str(thought_data.get("action", "answer")).strip()
         action_args = dict(thought_data.get("args", {}))
+
+        # Step reflection (ReAct++) — "sufficient" collapses to action="answer"
+        reflection = (
+            str(thought_data.get("reflection", "making_progress")).strip()
+            if step_reflection else "making_progress"
+        )
+        if reflection == "sufficient":
+            action = "answer"
 
         yield AgentEvent(
             type="status", stage="react",
@@ -264,6 +301,18 @@ def _react_loop(
             observations.append({"tool": action, "observation": step.observation})
             steps.append(step)
             continue
+
+        # ── Tool arg verification (ReAct++) ──────────────────────────────
+        if config.agent.tool_verification:
+            valid, verify_error = verify_tool_args(action, action_args)
+            if not valid:
+                step.ok = False
+                step.error = verify_error
+                step.observation = f"Tool verification failed: {verify_error}"
+                warnings.append(f"{action}: {verify_error}")
+                observations.append({"tool": action, "observation": step.observation})
+                steps.append(step)
+                continue
 
         # ── Execute tool ──────────────────────────────────────────────────
         yield AgentEvent(
@@ -346,6 +395,26 @@ def _react_loop(
         step.observation = observation_text
         observations.append({"tool": action, "args": _summarize_args(action_args), "observation": observation_text})
         steps.append(step)
+
+        # Update scratchpad with distilled key fact (ReAct++)
+        if scratchpad is not None:
+            scratchpad.add(action, observation_text)
+
+        # Stuck detection: inject recovery hint after ≥2 consecutive stuck reflections
+        if reflection == "stuck":
+            stuck_count += 1
+            if stuck_count >= 2:
+                observations.append({
+                    "tool": "_reflection",
+                    "observation": (
+                        "You appear stuck — the last two steps gave no new information. "
+                        "Try a different tool, different arguments, or say action='answer' "
+                        "if you have enough for a partial answer."
+                    ),
+                })
+                stuck_count = 0
+        else:
+            stuck_count = 0
 
     return tool_results, tool_calls, llm_traces, warnings, steps
 
