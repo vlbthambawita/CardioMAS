@@ -425,11 +425,13 @@ class TestRuntimeReactDispatch:
         client = MagicMock()
         client.chat.side_effect = [
             ChatResponse(model="t", content=route_resp, raw={}),   # router
-            ChatResponse(model="t", content=action_resp, raw={}),  # orchestrator iter 1
+            ChatResponse(model="t", content=action_resp, raw={}),  # orchestrator iter 1 fallback
         ]
-        client.chat_stream.return_value = iter([
-            ChatChunk(model="t", content=synth_resp, done=True, raw={}),
-        ])
+        # orchestrator streaming returns empty → falls back to chat(); responder gets the token
+        client.chat_stream.side_effect = [
+            iter([]),  # orchestrator iter 1 stream (empty → fallback)
+            iter([ChatChunk(model="t", content=synth_resp, done=True, raw={})]),  # responder
+        ]
 
         runtime = AgenticRuntime(config)
         runtime._chat_client = client  # inject mock

@@ -237,9 +237,28 @@ def _react_loop(
                 json_mode=True,
                 keep_alive=config.llm.keep_alive,
             )
-            response = chat_client.chat(request)
-            trace.response_preview = response.content[:200]
-            thought_data = _parse_thought(response.content)
+            yield AgentEvent(
+                type="llm_stream_start", stage=f"react-iter-{iteration}",
+                message="Orchestrator thinking...",
+                data={"model": model},
+            )
+            streamed_content = ""
+            for chunk in chat_client.chat_stream(request):
+                if chunk.content:
+                    streamed_content += chunk.content
+                    yield AgentEvent(
+                        type="llm_token", stage=f"react-iter-{iteration}",
+                        content=chunk.content, data={},
+                    )
+            yield AgentEvent(
+                type="llm_stream_end", stage=f"react-iter-{iteration}",
+                message="", data={},
+            )
+            if not streamed_content.strip():
+                fallback = chat_client.chat(request)
+                streamed_content = fallback.content
+            trace.response_preview = streamed_content[:200]
+            thought_data = _parse_thought(streamed_content)
         except Exception as exc:
             trace.ok = False
             trace.error = str(exc)

@@ -245,9 +245,10 @@ def _render_live_events(events) -> None:
             )
         elif event_type == "llm_stream_start":
             active_llm_stage = event.get("stage", "")
-            console.print(f"[green]{active_llm_stage} stream[/green]")
+            label = "responder" if active_llm_stage == "responder" else active_llm_stage
+            console.print(f"\n[green dim]▶ {label}[/green dim] ", end="")
         elif event_type == "llm_token":
-            console.print(event.get("content", ""), end="")
+            console.print(event.get("content", ""), end="", highlight=False)
         elif event_type == "llm_stream_end":
             if active_llm_stage:
                 console.print()
@@ -255,8 +256,6 @@ def _render_live_events(events) -> None:
         elif event_type == "final_result":
             result = event.get("data", {}).get("result", {})
             _render_query_result(result, answer_already_streamed=False)
-        elif event_type == "status" and event.get("stage") == "react":
-            console.print(f"[dim cyan]react[/dim cyan] {event.get('message', '')}")
 
 
 if __name__ == "__main__":
