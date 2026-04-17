@@ -1,0 +1,8 @@
+dataset_name: ptbxl_test
+local_data_path: /work/vajira/DATA/EXG_PTB_XL/physionet/files/ptb-xl/1_0_1
+knowledge_urls:
+  - https://physionet.org/content/ptb-xl/1.0.3/
+  - https://www.nature.com/articles/s41597-020-0495-6 
+goal: Build reusable dataset knowledge and analysis artifacts with python scripts to get train.csv, validate.csv and test.csv
+output_dir: /work/vajira/DL2026/CardioMAS/organization_output/ptbxl
+approve: true
