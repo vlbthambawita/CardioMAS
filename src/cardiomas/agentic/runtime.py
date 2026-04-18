@@ -31,6 +31,8 @@ class AgenticRuntime:
                 config.output_dir,
                 max_entries=config.agent.persistent_memory_max,
             )
+        if config.llm and config.llm.warmup and self._chat_client is not None:
+            self._chat_client.warmup()
 
     def build_corpus(self, force_rebuild: bool = False) -> CorpusManifest:
         if force_rebuild or not self.config.corpus_path.exists():

@@ -24,10 +24,13 @@ llm:
   base_url: http://localhost:11434
   model: qwen3:30b-a3b-thinking-2507-q4_K_M
   temperature: 0.6        # recommended for Qwen3 thinking models
-  max_tokens: 8000        # thinking models generate longer internal reasoning
+  max_tokens: 2000
+  orchestrator_max_tokens: 8000  # thinking models generate long internal reasoning before JSON
   code_max_tokens: 8000
   code_temperature: 0.6
   timeout_seconds: 300.0  # thinking models can take longer to respond
+  keep_alive: -1          # keep model in VRAM indefinitely
+  warmup: true            # pre-load model at startup
 
 agent:
   mode: react

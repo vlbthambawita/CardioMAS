@@ -16,10 +16,16 @@ class PersistentMemory:
     Max entries are enforced with LRU eviction.
     """
 
+    _FAILURE_PHRASES = (
+        "insufficient", "could not produce", "unable to",
+        "no information", "cannot answer",
+    )
+
     def __init__(self, store_path: Path, max_entries: int = 200) -> None:
         self._path = store_path
         self._max = max_entries
         self._entries: list[dict[str, Any]] = self._load()
+        self._purge_failures()
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,6 +80,16 @@ class PersistentMemory:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _purge_failures(self) -> None:
+        """Remove stale entries whose answer contains known failure phrases."""
+        before = len(self._entries)
+        self._entries = [
+            e for e in self._entries
+            if not any(p in e.get("answer", "").lower() for p in self._FAILURE_PHRASES)
+        ]
+        if len(self._entries) < before:
+            self._save()
 
     def _load(self) -> list[dict[str, Any]]:
         try:

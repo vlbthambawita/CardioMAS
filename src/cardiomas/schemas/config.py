@@ -132,12 +132,18 @@ class LLMConfig(BaseModel):
     router_model: str = ""
     temperature: float = 0.1
     max_tokens: int = 800
+    orchestrator_max_tokens: int = 0  # 0 = use max_tokens; raise for step_reflection or verbose models
     code_max_tokens: int = 4000
     code_temperature: float = 0.2
     router_max_tokens: int = 300
     timeout_seconds: float = 60.0
     keep_alive: str = "5m"
     repeat_penalty: float = 1.1  # Ollama default; raise to 1.2-1.3 to stop repetition loops
+    warmup: bool = False         # send a tiny prompt at startup to pre-load model into VRAM
+
+    @property
+    def resolved_orchestrator_max_tokens(self) -> int:
+        return self.orchestrator_max_tokens or self.max_tokens
 
     @property
     def resolved_planner_model(self) -> str:

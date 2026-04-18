@@ -152,9 +152,8 @@ def run_react_events(
             all_warnings.append("Answer grader flagged incomplete answer — more information may be needed.")
 
     # ── 9. Store in persistent memory ───────────────────────────────────────
-    _FAILURE_PHRASES = ("insufficient", "could not produce", "unable to", "no information", "cannot answer")
     if persistent_memory is not None and answer:
-        is_failure = any(p in answer.lower() for p in _FAILURE_PHRASES)
+        is_failure = any(p in answer.lower() for p in PersistentMemory._FAILURE_PHRASES)
         grounded = (
             not is_failure
             and not any("hallucination" in w.lower() for w in all_warnings)
@@ -239,7 +238,7 @@ def _react_loop(
                 model=model,
                 messages=messages,
                 temperature=config.llm.temperature,
-                max_tokens=config.llm.max_tokens,
+                max_tokens=config.llm.resolved_orchestrator_max_tokens,
                 json_mode=True,
                 keep_alive=config.llm.keep_alive,
             )
@@ -287,7 +286,7 @@ def _react_loop(
 
         yield AgentEvent(
             type="status", stage="react",
-            message=f"Thought: {thought[:120]}",
+            message=f"Thought: {thought[:300]} → action={action}",
             data={"action": action, "args": action_args},
         )
 
