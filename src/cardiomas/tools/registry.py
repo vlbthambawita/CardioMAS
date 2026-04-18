@@ -90,7 +90,8 @@ def build_registry(
                     "Required argument: 'path' (string) — absolute path to the directory. "
                     "Optional: 'max_depth' (int, default 4). "
                     "Use this first when you need to understand which files are available "
-                    "and how the data is organised before deciding what to read or compute."
+                    "and how the data is organised before deciding what to read or compute. "
+                    "After listing, call analyze_csv on each CSV file that is relevant to the query."
                 ),
                 category="dataset",
             ),
@@ -201,7 +202,8 @@ def build_registry(
                     "Required argument: 'path' (string) — absolute path to the CSV file. "
                     "Optional: 'max_rows' (int, default 5) — number of sample rows to include. "
                     "Use this when you have a specific CSV file and want to understand its structure "
-                    "and content before writing analysis code."
+                    "and content before writing analysis code. "
+                    "For queries that span the whole dataset, call this separately for each relevant CSV file."
                 ),
                 category="dataset",
             ),

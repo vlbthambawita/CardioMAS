@@ -155,7 +155,7 @@ def orchestrator_messages(
         for i, obs in enumerate(observations, 1):
             tool = obs.get("tool", "?")
             observation = obs.get("observation", obs.get("error", ""))
-            parts.append(f"  Step {i}: called {tool!r} → {_trim(observation, 200)}")
+            parts.append(f"  Step {i}: called {tool!r} → {_trim(observation, 500)}")
         obs_text = "\nPrevious steps:\n" + "\n".join(parts) + "\n"
 
     if step_reflection:
@@ -177,7 +177,9 @@ def orchestrator_messages(
         "'thought' is your reasoning. 'action' is the tool name or 'answer' when done. "
         "'args' is a dict of arguments for the tool (empty dict when action is 'answer'). "
         "Do not repeat the same tool call with identical args. "
-        "Say action='answer' when you have enough information."
+        "When list_folder_structure or inspect_dataset reveals multiple CSV files, "
+        "call analyze_csv on each relevant CSV file before answering — do not stop after the first one. "
+        "Say action='answer' only when you have examined all CSV files relevant to the query."
     )
 
     user_parts = [f"Query: {query}"]
