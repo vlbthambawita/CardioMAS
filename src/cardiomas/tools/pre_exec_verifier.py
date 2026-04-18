@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_PATH_TOOLS = {"list_folder_structure", "read_wfdb_dataset", "inspect_dataset"}
+_PATH_TOOLS = {"list_folder_structure", "read_wfdb_dataset", "inspect_dataset", "lookup_csv_headings"}
+_FILE_TOOLS = {"analyze_csv"}
 _CODE_TOOLS = {"generate_python_artifact", "generate_shell_artifact"}
 
 
@@ -39,6 +40,27 @@ def verify_tool_args(name: str, args: dict) -> tuple[bool, str]:
             )
         if not p.is_dir():
             return False, f"'{path}' is a file, not a directory. Provide the parent directory."
+
+    if name in _FILE_TOOLS:
+        path = str(
+            args.get("path") or args.get("file") or args.get("csv_path") or ""
+        ).strip()
+        if not path:
+            return False, (
+                f"'{name}' requires a 'path' argument (absolute path to the CSV file). "
+                "Provide args={{\"path\": \"<absolute_path_to_csv>\"}}."
+            )
+        p = Path(path)
+        if not p.exists():
+            return False, (
+                f"File does not exist: '{path}'. "
+                "Use list_folder_structure on the dataset directory to find available CSV files."
+            )
+        if p.is_dir():
+            return False, (
+                f"'{path}' is a directory. "
+                "Provide the path to a specific CSV file, not a directory."
+            )
 
     if name in _CODE_TOOLS:
         task = str(

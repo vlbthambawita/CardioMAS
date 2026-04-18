@@ -29,7 +29,7 @@ llm:
   code_max_tokens: 8000
   code_temperature: 0.6
   timeout_seconds: 300.0  # thinking models can take longer to respond
-  keep_alive: -1          # keep model in VRAM indefinitely
+  keep_alive: "-1"        # keep model in VRAM indefinitely
   warmup: true            # pre-load model at startup
 
 agent:
@@ -57,6 +57,8 @@ autonomy:
 tools:
   enabled:
     - list_folder_structure
+    - analyze_csv
+    - lookup_csv_headings
     - read_wfdb_dataset
     - read_dataset_website
     - generate_python_artifact

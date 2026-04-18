@@ -6,6 +6,7 @@ from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.base import EmbeddingClient
 from cardiomas.schemas.config import RuntimeConfig
 from cardiomas.schemas.tools import ToolResult, ToolSpec
+from cardiomas.tools.csv_tools import analyze_csv, lookup_csv_headings
 from cardiomas.tools.dataset_tools import inspect_dataset, list_folder_structure
 from cardiomas.tools.research_tools import fetch_webpage
 from cardiomas.tools.retrieval_tools import retrieve_corpus
@@ -186,6 +187,50 @@ def build_registry(
                 category="research",
             ),
             _resolve_and_fetch,
+        )
+
+    if "analyze_csv" in config.tools.enabled:
+        registry.register(
+            ToolSpec(
+                name="analyze_csv",
+                description=(
+                    "Read a CSV or TSV file and return its column headings, data types, "
+                    "descriptive statistics (count, mean, std, min, 25th/50th/75th percentile, max) "
+                    "for numeric columns, unique-value counts and top values for categorical columns, "
+                    "missing-value percentages per column, and sample rows. "
+                    "Required argument: 'path' (string) — absolute path to the CSV file. "
+                    "Optional: 'max_rows' (int, default 5) — number of sample rows to include. "
+                    "Use this when you have a specific CSV file and want to understand its structure "
+                    "and content before writing analysis code."
+                ),
+                category="dataset",
+            ),
+            lambda **kw: analyze_csv(
+                path=str(kw.get("path") or kw.get("file") or kw.get("csv_path") or ""),
+                max_rows=int(kw.get("max_rows", 5)),
+            ),
+        )
+
+    if "lookup_csv_headings" in config.tools.enabled:
+        registry.register(
+            ToolSpec(
+                name="lookup_csv_headings",
+                description=(
+                    "Search documentation files (README, codebooks, data dictionaries, "
+                    "Markdown/text files) inside a dataset directory to find the meaning "
+                    "and description of CSV column headings. Returns surrounding context lines "
+                    "for each match. Useful when column names are abbreviated or unclear. "
+                    "Required arguments: 'path' (string) — dataset directory to search; "
+                    "'headings' (string) — comma-separated column names to look up, "
+                    "e.g. \"age,sex,label,ecg_id\". "
+                    "Use this after analyze_csv to understand what each column represents."
+                ),
+                category="dataset",
+            ),
+            lambda **kw: lookup_csv_headings(
+                path=str(_path_kwarg(**kw)),
+                headings=str(kw.get("headings") or kw.get("columns") or kw.get("query") or ""),
+            ),
         )
 
     if "fetch_webpage" in config.tools.enabled:

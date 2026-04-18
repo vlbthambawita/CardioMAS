@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 
 class KnowledgeSource(BaseModel):
@@ -48,6 +48,8 @@ class ToolPolicyConfig(BaseModel):
         default_factory=lambda: [
             "retrieve_corpus",
             "list_folder_structure",
+            "analyze_csv",
+            "lookup_csv_headings",
             "read_wfdb_dataset",
             "read_dataset_website",
             "inspect_dataset",
@@ -139,6 +141,11 @@ class LLMConfig(BaseModel):
     timeout_seconds: float = 60.0
     keep_alive: str = "5m"
     repeat_penalty: float = 1.1  # Ollama default; raise to 1.2-1.3 to stop repetition loops
+
+    @field_validator("keep_alive", mode="before")
+    @classmethod
+    def _coerce_keep_alive(cls, v: object) -> str:
+        return str(v)
     warmup: bool = False         # send a tiny prompt at startup to pre-load model into VRAM
 
     @property

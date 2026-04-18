@@ -52,6 +52,8 @@ autonomy:
 tools:
   enabled:
     - list_folder_structure
+    - analyze_csv
+    - lookup_csv_headings
     - read_wfdb_dataset
     - read_dataset_website
     - generate_python_artifact
