@@ -182,6 +182,21 @@ class OllamaChatClient(ChatClient):
                 raw=item,
             )
 
+    def warmup(self) -> bool:
+        """Send a single 1-token prompt to force Ollama to load the model into VRAM."""
+        try:
+            request = ChatRequest(
+                model=self.config.model,
+                messages=[ChatMessage(role="user", content="hi")],
+                temperature=0.0,
+                max_tokens=1,
+                keep_alive=self.config.keep_alive,
+            )
+            self.chat(request)
+            return True
+        except Exception:
+            return False
+
 
 class OllamaEmbeddingClient(EmbeddingClient):
     def __init__(self, config: EmbeddingConfig) -> None:
@@ -212,26 +227,6 @@ class OllamaEmbeddingClient(EmbeddingClient):
                 raise OllamaError("Malformed Ollama embedding response: one embedding was not a list.")
             normalized.append([float(value) for value in item])
         return normalized
-
-
-    def warmup(self) -> bool:
-        """Send a single 1-token prompt to force Ollama to load the model into VRAM.
-
-        Returns True if the model responded, False on any error.
-        The response content is discarded — the only goal is triggering model load.
-        """
-        try:
-            request = ChatRequest(
-                model=self.config.model,
-                messages=[ChatMessage(role="user", content="hi")],
-                temperature=0.0,
-                max_tokens=1,
-                keep_alive=self.config.keep_alive,
-            )
-            self.chat(request)
-            return True
-        except Exception:
-            return False
 
 
 def build_chat_client(config: LLMConfig | None) -> OllamaChatClient | None:
