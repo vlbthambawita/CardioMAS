@@ -422,7 +422,18 @@ def _react_loop(
 
         # Update scratchpad with distilled key fact (ReAct++)
         if scratchpad is not None:
-            scratchpad.add(action, observation_text)
+            if action == "list_folder_structure" and result.ok and isinstance(result.data, dict):
+                csv_map = result.data.get("csv_headers", {})
+                base = str(result.data.get("path", action_args.get("path", "")))
+                if csv_map:
+                    abs_paths = "; ".join(
+                        str(Path(base) / rel) for rel in csv_map
+                    )
+                    scratchpad.add(action, f"CSV files (absolute paths): {abs_paths}")
+                else:
+                    scratchpad.add(action, observation_text)
+            else:
+                scratchpad.add(action, observation_text)
 
         # Stuck detection: inject recovery hint after ≥2 consecutive stuck reflections
         if reflection == "stuck":
@@ -501,6 +512,14 @@ def _parse_thought(content: str) -> dict:
 
 
 def _call_key(action: str, args: dict) -> tuple[str, str]:
+    # For file-analysis tools normalise by filename only so path-typo variants
+    # (e.g. ptbxl__plus vs ptbxl_plus) don't bypass the dedup check.
+    if action in {"analyze_csv", "lookup_csv_headings"}:
+        path_val = args.get("path") or args.get("file") or args.get("csv_path") or ""
+        normalized = {**args, "path": Path(str(path_val)).name}
+        normalized.pop("file", None)
+        normalized.pop("csv_path", None)
+        return (action, json.dumps(sorted(normalized.items()), default=str))
     return (action, json.dumps(sorted(args.items()), default=str))
 
 
