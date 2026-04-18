@@ -112,6 +112,14 @@ class _OllamaTransport:
         return HealthStatus(provider="ollama", base_url=self.base_url, ok=True, models=models)
 
 
+def _keep_alive_value(raw: str) -> int | str:
+    """Ollama requires -1 as integer for 'keep indefinitely'; duration strings like '5m' are fine as-is."""
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
 class OllamaChatClient(ChatClient):
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
@@ -135,7 +143,7 @@ class OllamaChatClient(ChatClient):
             "model": request.model,
             "messages": [message.model_dump(mode="json") for message in request.messages],
             "stream": False,
-            "keep_alive": request.keep_alive or self.config.keep_alive,
+            "keep_alive": _keep_alive_value(request.keep_alive or self.config.keep_alive),
             "options": options,
         }
         if request.json_mode:
@@ -162,7 +170,7 @@ class OllamaChatClient(ChatClient):
             "model": request.model,
             "messages": [message.model_dump(mode="json") for message in request.messages],
             "stream": True,
-            "keep_alive": request.keep_alive or self.config.keep_alive,
+            "keep_alive": _keep_alive_value(request.keep_alive or self.config.keep_alive),
             "options": options,
         }
         if request.json_mode:
