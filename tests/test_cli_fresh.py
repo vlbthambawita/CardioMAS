@@ -112,7 +112,7 @@ def test_query_live_cli_renders_stream_events(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "cardiomas.cli.main.CardioMAS.query_stream",
-        lambda self, query, force_rebuild=False: iter(
+        lambda self, query, force_rebuild=False, agent_name=None: iter(
             [
                 {"type": "status", "stage": "planner", "message": "Planning started.", "content": "", "data": {}},
                 {"type": "tool_started", "stage": "tool", "message": "", "content": "", "data": {"tool_name": "retrieve_corpus"}},

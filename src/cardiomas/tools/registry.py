@@ -4,7 +4,8 @@ from collections.abc import Callable
 
 from cardiomas.autonomy.recovery import AutonomousToolManager
 from cardiomas.inference.base import EmbeddingClient
-from cardiomas.schemas.config import RuntimeConfig
+from cardiomas.schemas.config import RetrievalConfig, RuntimeConfig
+from cardiomas.schemas.evidence import EvidenceChunk
 from cardiomas.schemas.tools import ToolResult, ToolSpec
 from cardiomas.tools.csv_tools import analyze_csv, lookup_csv_headings
 from cardiomas.tools.dataset_tools import inspect_dataset, list_folder_structure
@@ -61,6 +62,8 @@ def build_registry(
     chunks,
     embedding_client: EmbeddingClient | None = None,
     autonomy_manager: AutonomousToolManager | None = None,
+    agent_chunks: list[EvidenceChunk] | None = None,
+    agent_retrieval: RetrievalConfig | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
 
@@ -77,6 +80,8 @@ def build_registry(
                 config=config,
                 embedding_client=embedding_client,
                 top_k=top_k,
+                agent_chunks=agent_chunks,
+                agent_retrieval=agent_retrieval,
             ),
         )
 

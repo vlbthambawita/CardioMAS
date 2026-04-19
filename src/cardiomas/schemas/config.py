@@ -75,6 +75,16 @@ class ResponseConfig(BaseModel):
     max_citations: int = 5
 
 
+class AgentKnowledgeConfig(BaseModel):
+    enabled: bool = False
+    sources: list[KnowledgeSource] = Field(default_factory=list)
+    retrieval: RetrievalConfig | None = None  # None = inherit global retrieval config
+
+
+class KnowledgeScrapingConfig(BaseModel):
+    enabled: bool = False  # master opt-in switch; false = ignore all agent knowledge blocks
+
+
 class AgentConfig(BaseModel):
     mode: Literal["react", "linear"] = "linear"
     max_iterations: int = 5
@@ -121,6 +131,16 @@ class AutonomyConfig(BaseModel):
     @property
     def enabled(self) -> bool:
         return self.enable_code_agents
+
+
+class NamedAgentConfig(BaseModel):
+    name: str
+    description: str = ""
+    knowledge: AgentKnowledgeConfig = Field(default_factory=AgentKnowledgeConfig)
+    # Optional per-agent overrides (None = inherit global)
+    agent: AgentConfig | None = None
+    llm: LLMConfig | None = None
+    tools: ToolPolicyConfig | None = None
 
 
 class LLMConfig(BaseModel):
@@ -200,6 +220,8 @@ class RuntimeConfig(BaseModel):
     llm: LLMConfig | None = None
     embeddings: EmbeddingConfig | None = None
     scripts_dir: str = ""
+    knowledge_scraping: KnowledgeScrapingConfig = Field(default_factory=KnowledgeScrapingConfig)
+    named_agents: list[NamedAgentConfig] = Field(default_factory=list)
 
     @property
     def corpus_path(self) -> Path:
@@ -220,6 +242,17 @@ class RuntimeConfig(BaseModel):
         if self.scripts_dir:
             return Path(self.scripts_dir)
         return Path(self.output_dir) / "scripts"
+
+    def agent_corpus_path(self, agent_name: str) -> Path:
+        return Path(self.output_dir) / "agents" / agent_name / "corpus.jsonl"
+
+    def agent_manifest_path(self, agent_name: str) -> Path:
+        return Path(self.output_dir) / "agents" / agent_name / "corpus_manifest.json"
+
+    def active_named_agent(self, name: str | None) -> NamedAgentConfig | None:
+        if not name:
+            return None
+        return next((a for a in self.named_agents if a.name == name), None)
 
     @property
     def planner_uses_ollama(self) -> bool:
@@ -293,6 +326,33 @@ def _resolve_relative_paths(data: dict, base_dir: Path) -> dict:
     scripts_dir = resolved.get("scripts_dir")
     if isinstance(scripts_dir, str) and scripts_dir and not Path(scripts_dir).is_absolute():
         resolved["scripts_dir"] = str((base_dir / scripts_dir).resolve())
+
+    # Resolve paths in named_agents[*].knowledge.sources[*].path
+    named_agents_raw = resolved.get("named_agents", [])
+    named_agents_resolved = []
+    for agent_item in named_agents_raw:
+        if not isinstance(agent_item, dict):
+            named_agents_resolved.append(agent_item)
+            continue
+        agent_copy = dict(agent_item)
+        knowledge = agent_copy.get("knowledge")
+        if isinstance(knowledge, dict):
+            knowledge_copy = dict(knowledge)
+            agent_sources = []
+            for src in knowledge_copy.get("sources", []):
+                if not isinstance(src, dict):
+                    agent_sources.append(src)
+                    continue
+                src_copy = dict(src)
+                path_val = src_copy.get("path")
+                if isinstance(path_val, str) and path_val and not Path(path_val).is_absolute():
+                    src_copy["path"] = str((base_dir / path_val).resolve())
+                agent_sources.append(src_copy)
+            knowledge_copy["sources"] = agent_sources
+            agent_copy["knowledge"] = knowledge_copy
+        named_agents_resolved.append(agent_copy)
+    resolved["named_agents"] = named_agents_resolved
+
     return resolved
 
 

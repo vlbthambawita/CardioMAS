@@ -19,15 +19,30 @@ class CardioMAS:
             self.config = RuntimeConfig()
         self.runtime = AgenticRuntime(self.config)
 
-    def build_corpus(self, force_rebuild: bool = False) -> dict[str, Any]:
-        return self.runtime.build_corpus(force_rebuild=force_rebuild).model_dump(mode="json")
+    def build_corpus(self, force_rebuild: bool = False, agent_name: str | None = None) -> dict[str, Any]:
+        return self.runtime.build_corpus(force_rebuild=force_rebuild, agent_name=agent_name).model_dump(mode="json")
 
-    def query(self, query: str, force_rebuild: bool = False) -> dict[str, Any]:
-        return self.runtime.query(query, force_rebuild=force_rebuild).model_dump(mode="json")
+    def query(self, query: str, force_rebuild: bool = False, agent_name: str | None = None) -> dict[str, Any]:
+        return self.runtime.query(query, force_rebuild=force_rebuild, agent_name=agent_name).model_dump(mode="json")
 
-    def query_stream(self, query: str, force_rebuild: bool = False) -> Iterator[dict[str, Any]]:
-        for event in self.runtime.query_stream(query, force_rebuild=force_rebuild):
+    def query_stream(self, query: str, force_rebuild: bool = False, agent_name: str | None = None) -> Iterator[dict[str, Any]]:
+        for event in self.runtime.query_stream(query, force_rebuild=force_rebuild, agent_name=agent_name):
             yield event.model_dump(mode="json")
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        """Return a list of configured named agents with corpus-built status."""
+        result = []
+        for agent_cfg in self.config.named_agents:
+            corpus_path = self.config.agent_corpus_path(agent_cfg.name)
+            result.append({
+                "name": agent_cfg.name,
+                "description": agent_cfg.description,
+                "knowledge_enabled": agent_cfg.knowledge.enabled,
+                "source_count": len(agent_cfg.knowledge.sources),
+                "corpus_built": corpus_path.exists(),
+                "corpus_path": str(corpus_path),
+            })
+        return result
 
     def inspect_tools(self) -> list[dict[str, Any]]:
         return [spec.model_dump(mode="json") for spec in self.runtime.inspect_tools()]

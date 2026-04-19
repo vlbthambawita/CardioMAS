@@ -32,11 +32,12 @@ def _load_api(config_path: str) -> CardioMAS:
 def build_corpus(
     config_path: Annotated[str, typer.Option("--config", "-c", help="Path to YAML or JSON runtime config")],
     force: Annotated[bool, typer.Option("--force", help="Rebuild the corpus even if it already exists")] = False,
+    agent: Annotated[str | None, typer.Option("--agent", "-a", help="Build only this named agent's corpus")] = None,
     output_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Build the local knowledge corpus defined by the runtime config."""
     api = _load_api(config_path)
-    result = api.build_corpus(force_rebuild=force)
+    result = api.build_corpus(force_rebuild=force, agent_name=agent)
     if output_json:
         rprint(json.dumps(result, indent=2, default=str))
         return
@@ -49,6 +50,7 @@ def build_corpus(
 def query(
     question: Annotated[str, typer.Argument(help="Grounded question to answer")],
     config_path: Annotated[str, typer.Option("--config", "-c", help="Path to YAML or JSON runtime config")],
+    agent: Annotated[str | None, typer.Option("--agent", "-a", help="Named agent to use for this query")] = None,
     force_rebuild: Annotated[bool, typer.Option("--force-rebuild", help="Rebuild corpus before running the query")] = False,
     live: Annotated[bool, typer.Option("--live", help="Stream step-level events and LLM tokens live")] = False,
     output_json: Annotated[bool, typer.Option("--json")] = False,
@@ -56,7 +58,7 @@ def query(
     """Run the fresh Agentic RAG runtime against the configured knowledge sources."""
     api = _load_api(config_path)
     if live:
-        events = api.query_stream(question, force_rebuild=force_rebuild)
+        events = api.query_stream(question, force_rebuild=force_rebuild, agent_name=agent)
         if output_json:
             for event in events:
                 rprint(json.dumps(event, default=str))
@@ -64,7 +66,7 @@ def query(
         _render_live_events(events)
         return
 
-    result = api.query(question, force_rebuild=force_rebuild)
+    result = api.query(question, force_rebuild=force_rebuild, agent_name=agent)
     if output_json:
         rprint(json.dumps(result, indent=2, default=str))
         return
@@ -127,6 +129,43 @@ def check_ollama(
         models = ", ".join(model["name"] for model in item.get("models", [])) if item.get("models") else ""
         table.add_row(name, str(configured), str(item.get("ok", False)), models, item.get("error", ""))
     console.print(table)
+
+
+@app.command("list-agents")
+def list_agents(
+    config_path: Annotated[str, typer.Option("--config", "-c", help="Path to YAML or JSON runtime config")],
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List configured named agents and whether their corpus has been built."""
+    api = _load_api(config_path)
+    agents = api.list_agents()
+    if output_json:
+        rprint(json.dumps(agents, indent=2, default=str))
+        return
+    if not agents:
+        console.print("[yellow]No named agents configured.[/yellow]")
+        config = RuntimeConfig.from_file(config_path)
+        if not config.knowledge_scraping.enabled:
+            console.print("[dim]Tip: set knowledge_scraping.enabled: true to activate agent knowledge scraping.[/dim]")
+        return
+    table = Table(title="Named Agents")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description")
+    table.add_column("Knowledge")
+    table.add_column("Sources")
+    table.add_column("Corpus built")
+    for ag in agents:
+        table.add_row(
+            ag["name"],
+            ag["description"][:60] + ("…" if len(ag["description"]) > 60 else ""),
+            "[green]on[/green]" if ag["knowledge_enabled"] else "[dim]off[/dim]",
+            str(ag["source_count"]),
+            "[green]yes[/green]" if ag["corpus_built"] else "[red]no[/red]",
+        )
+    console.print(table)
+    config = RuntimeConfig.from_file(config_path)
+    if not config.knowledge_scraping.enabled:
+        console.print("[yellow]Note: knowledge_scraping.enabled is false — run build-corpus to activate.[/yellow]")
 
 
 @app.command()
