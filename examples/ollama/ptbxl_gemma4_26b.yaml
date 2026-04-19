@@ -3,15 +3,12 @@ output_dir: runtime_output/react-mode/ptbxl_gemma4_26b
 
 sources:
   - kind: dataset_dir
-    path: /work/vajira/DATA/ptbxl_plus/physionet.org/files/ptb-xl-plus/1.0.1
+    path: /work/vajira/DATA/EXG_PTB_XL/physionet/files/ptb-xl/1_0_1
     label: ptbxl
   - kind: web_page
     url: https://physionet.org/content/ptb-xl/1.0.3/
     label: ptbxl-physionet-page
-  - kind: web_page
-    url: https://physionet.org/content/ptb-xl-plus/1.0.1/
-    label: ptbxl-plus-physionet-page
-
+  
 scripts_dir: runtime_output/scripts/ptbxl-gemma4-26b
 
 retrieval:
